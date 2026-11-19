@@ -1,0 +1,273 @@
+{
+  "name": "ENGINE1 | Canvas 01 | Lead Intake, Validation & Identification | v1.0",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "# CANVAS 01 — LEAD INTAKE / v1.0\n\n**Inactive import.** Assign `Header Auth` + `ENGINE1 - PostgreSQL` credentials. Apply companion SQL migration **after taking a PostgreSQL backup**, then test with the webhook **Test URL**.\n\n**Canvas 01 owns:** input validation, durable lead acceptance, identity matching, assignment, CRM-leg creation, queueing handoffs.\n\n**Other canvases own:** messaging (02), AI/nurture (03), Slack/human (04), CRM API writes (05), watchdog (06), analytics (07).\n\n**Do not turn off messaging_kill_switch.** No external provider calls exist in this workflow.",
+        "height": 266,
+        "width": 690
+      },
+      "id": "23259e57-8a9d-46fe-b45b-eeafed0a084d",
+      "name": "README · Contract & safety",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -496,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "content": "# POST intake contract\n\nHeader-authenticated POST `/engine1-lead-intake-v1` with JSON fields:\n`source`, `event_key`, `first_name`, `email` or `phone_e164`, `email_consent`, `sms_consent`, optional `message`.\n\nThe node prefixes **source:event_key** for global uniqueness.\n\n**Duplicate replay:** no additional lead or handoffs.\n**New event, same contact:** new lead + acknowledgment eligibility.\n**Invalid identity:** durable quarantine.\n**Malformed envelope:** HTTP 400 without database write.",
+        "height": 266,
+        "width": 676
+      },
+      "id": "1af792f2-b1e3-42c4-9b65-68c8d55bb4ec",
+      "name": "README · Input & idempotency",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        288,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "content": "# TEST GATES\n\n1. New valid event -> `accepted`, 5 pending outbox rows, 2 CRM legs.\n2. Same source + event_key -> `duplicate`, 0 new outbox rows.\n3. New event_key, same identity -> `repeat`, ack_status `pending`.\n4. No valid identity -> `quarantined`, 0 queued rows.\n5. All reps inactive (isolated fixture only) -> `no_active_rep`, CRM legs still created; Canvas 06 job.\n\nWebhook is Header Auth; workflow is **inactive**. No SMS/email/CRM API calls.",
+        "height": 264,
+        "width": 675
+      },
+      "id": "8c4c6bee-34f4-4036-a435-95a4bea6e5f5",
+      "name": "README · Outputs & tests",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1360,
+        944
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "engine1-lead-intake-v1",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "f92c5ebb-0062-4039-b6ca-099fb821a98a",
+      "name": "T1 · Authenticated Lead Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        192,
+        704
+      ],
+      "webhookId": "88f16029-b213-50f0-90c2-c840cf4d3285",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "zwA6W1b7QHY2hWRH",
+          "name": "Webhook API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Canvas 01 / Contract v1.0. No secrets, outbound HTTP calls or providers here.\nconst envelope = $input.first().json;\nlet body = envelope?.body;\nconst errors = [];\nif (typeof body === 'string') {\n  try { body = JSON.parse(body); } catch (_) { body = null; }\n}\nif (!body || typeof body !== 'object' || Array.isArray(body)) {\n  return [{json:{valid_request:false,validation_errors:['body_must_be_json_object']}}];\n}\nlet size = 0;\ntry { size = JSON.stringify(body).length; } catch (_) {\n  return [{json:{valid_request:false,validation_errors:['body_not_serializable']}}];\n}\nif (size > 16000) {\n  return [{json:{valid_request:false,validation_errors:['body_exceeds_16k_limit']}}];\n}\nconst t = (value, max) => typeof value === 'string' ? value.trim().slice(0,max) : '';\nconst source = t(body.source ?? body.lead_source,65).toLowerCase();\nconst upstreamKey = t(body.event_key ?? body.event_id ?? body.submission_id,161);\nif (!/^[a-z0-9_.-]{1,64}$/.test(source)) errors.push('invalid_or_missing_source');\nif (!/^[A-Za-z0-9:._-]{1,160}$/.test(upstreamKey)) errors.push('invalid_or_missing_event_key');\nif (errors.length) return [{json:{valid_request:false,validation_errors:errors}}];\n\nconst firstName = t(body.first_name ?? body.name,120).replace(/[\\u0000-\\u001F]/g,' ');\nconst rawEmail = typeof (body.email ?? body.email_address) === 'string'\n  ? (body.email ?? body.email_address).trim().toLowerCase() : '';\nlet email = rawEmail;\nlet phone = typeof (body.phone_e164 ?? body.phone ?? body.mobile) === 'string'\n  ? (body.phone_e164 ?? body.phone ?? body.mobile).trim().replace(/[\\s().-]/g,'') : '';\nif (/^03\\d{9}$/.test(phone)) phone = '+92' + phone.slice(1);\nelse if (/^92\\d{10}$/.test(phone)) phone = '+' + phone;\n\nconst identityProblems = [];\nif (rawEmail && (rawEmail.length > 254 || !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(rawEmail)))\n  identityProblems.push('invalid_email');\nif (phone && !/^\\+[1-9]\\d{7,14}$/.test(phone)) identityProblems.push('invalid_phone');\nif (!rawEmail && !phone) identityProblems.push('missing_email_and_phone');\n// Invalid supplied identity forces a durable quarantine through accept_lead().\nif (identityProblems.length) { email = null; phone = null; }\n\nconst safePayload = {\n  source_event_key: upstreamKey,\n  sms_consent: body.sms_consent === true,\n  email_consent: body.email_consent === true,\n  message: t(body.message ?? body.inquiry ?? body.requirements,2500),\n  campaign: t(body.campaign,180),\n  utm_source: t(body.utm_source,180),\n  utm_medium: t(body.utm_medium,180),\n  utm_campaign: t(body.utm_campaign,180),\n  validation_errors: identityProblems\n};\nreturn [{json:{\n  valid_request:true,\n  schema_version:'1.0',\n  // Prefix source because leads.event_key is globally unique across sources.\n  event_key:source+':'+upstreamKey,\n  source,\n  first_name:firstName || null,\n  email:email || null,\n  phone_e164:phone || null,\n  raw_payload:safePayload,\n  t_received:new Date().toISOString(),\n  identity_will_quarantine:identityProblems.length>0\n}}];"
+      },
+      "id": "9afdffc4-c83d-4b73-8543-752524e57c92",
+      "name": "A1 · Normalize + Validate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        704
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "3f679753-33fc-436f-8ddf-8af876d795d1",
+              "leftValue": "={{ $json.valid_request }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c869875a-6492-408a-a011-40afe524d889",
+      "name": "A2 · Valid envelope?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        768,
+        704
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: false, schema_version: \"1.0\", error: \"validation_failed\", reasons: $json.validation_errors } }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "366721fd-3cfc-4d2c-b56e-4b9491e9a4c9",
+      "name": "A3 · Respond 400 Invalid Request",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1088,
+        912
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT public.engine1_c01_process_v1($1::text,$2::text,$3::text,$4::text,$5::text,$6::jsonb,$7::timestamptz) AS intake_result;",
+        "options": {
+          "queryReplacement": "={{ [ $json.event_key, $json.source, $json.first_name, $json.email, $json.phone_e164, JSON.stringify($json.raw_payload), $json.t_received ] }}"
+        }
+      },
+      "id": "d9e6d507-ac21-47ae-a9d3-a4769bf08f2d",
+      "name": "B1 · PostgreSQL Atomic Intake + Outbox",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1088,
+        592
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Qck2ApAtQoYZ4CnL",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const result = $input.first().json.intake_result;\nif (!result || typeof result !== 'object' || result.schema_version !== '1.0'\n    || !['accepted','repeat','duplicate','quarantined'].includes(result.outcome)) {\n  throw new Error('Canvas 01 returned an invalid database contract response');\n}\nreturn [{json:{\n  ok: result.ok === true,\n  schema_version:'1.0',\n  outcome:result.outcome,\n  lead_id:result.lead_id ?? null,\n  contact_id:result.contact_id ?? null,\n  event_key:result.event_key ?? null,\n  assigned_rep_id:result.assigned_rep_id ?? null,\n  assignment_outcome:result.assignment_outcome ?? null,\n  ack_status:result.ack_status ?? null,\n  queued_handoffs:result.queued_handoffs ?? 0,\n  downstream_execution:result.downstream_execution ?? 'not_triggered',\n  reason:result.reason ?? null\n}}];"
+      },
+      "id": "d42a2301-1782-4a62-a101-19b84e1e2650",
+      "name": "B2 · Contract Response Mapping",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1408,
+        592
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "c82829af-ce3f-439f-b76e-ea5b17cc6097",
+      "name": "B3 · Respond 200 Durable Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1680,
+        592
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "T1 · Authenticated Lead Webhook": {
+      "main": [
+        [
+          {
+            "node": "A1 · Normalize + Validate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "A1 · Normalize + Validate": {
+      "main": [
+        [
+          {
+            "node": "A2 · Valid envelope?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "A2 · Valid envelope?": {
+      "main": [
+        [
+          {
+            "node": "B1 · PostgreSQL Atomic Intake + Outbox",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "A3 · Respond 400 Invalid Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "B1 · PostgreSQL Atomic Intake + Outbox": {
+      "main": [
+        [
+          {
+            "node": "B2 · Contract Response Mapping",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "B2 · Contract Response Mapping": {
+      "main": [
+        [
+          {
+            "node": "B3 · Respond 200 Durable Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "T4oF1iLesIwWu1I7",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "3626b885-3fc5-4c57-a7f7-ef06d2674055",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "a9ffeeb0672bc04438a2517478a96e439ea10f4d2d22d78a8f5fe1f2de5159ef"
+  },
+  "nodeGroups": [],
+  "id": "dpc5cWOlocj6HOK7",
+  "tags": []
+}

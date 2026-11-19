@@ -1,0 +1,1024 @@
+{
+  "name": "ENGINE1 — Canvas 05 — Dual-CRM Synchronization v1.0",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "# ENGINE 1 — CANVAS 05 / DUAL CRM SYNC\n**PostgreSQL is source of truth.** Install the separate Canvas 05 SQL migration, assign provider-specific Header Auth credentials, verify real owner IDs and CRM custom fields, then test before enabling schedules.\nIndependent HubSpot and GHL jobs. No secrets or actual location IDs in JSON.\n**Import defaults: all schedules disabled, all database flags OFF.**",
+        "height": 290,
+        "width": 514
+      },
+      "id": "71c6150a-3f37-4520-a869-f1dff0293c78",
+      "name": "ABOUT · Canvas 05",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -128,
+        -304
+      ]
+    },
+    {
+      "parameters": {
+        "content": "# HUBSPOT\nIdentity first: saved ID → GET, else exact email/phone search. Block conflicts. Create via unique `engine1_contact_id` batch upsert, update by record ID. Never clear lifecycle stage.\nRequired custom properties listed in setup. HTTP credential = HubSpot private app bearer token.",
+        "height": 260,
+        "width": 470
+      },
+      "id": "da6039dc-d7b5-4fa5-af09-d79a74324b87",
+      "name": "LANE H · HubSpot",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        880,
+        -320
+      ]
+    },
+    {
+      "parameters": {
+        "content": "# GOHIGHLEVEL\nSaved ID → GET, else duplicate lookups by email and phone; do not merge split identities. Existing: PUT, new: POST /contacts/upsert with `createNewIfDuplicateAllowed:false`. Preserve tags.\nVersion: `2021-07-28`. Credential must belong to the correct GHL sub-account and have contact read/write scopes.",
+        "height": 270,
+        "width": 470
+      },
+      "id": "5eff2cdb-06a0-4d5d-a34f-3bdf50775222",
+      "name": "LANE G · GoHighLevel",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1360,
+        -320
+      ]
+    },
+    {
+      "parameters": {
+        "content": "# RECONCILIATION & FAILURE SAFETY\nEvery 2m: queue changed fields promptly; periodic read-back detects owner drift. Every 5m: expired CRM HTTP sends become UNKNOWN, not blind retries. Provider failures are recorded by PostgreSQL with Canvas 06 incidents.\nSchedules intentionally disabled until credentials, custom fields, and SQL migration are configured.",
+        "height": 260,
+        "width": 470
+      },
+      "id": "9dc946bf-3ad4-4c16-9b70-45d97bf96d0a",
+      "name": "LANE R · Reconcile / Recover",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2352,
+        768
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "4af15bab-6cfa-477a-9bfd-e14d9478bfd4",
+      "name": "T1 · Every Minute / HubSpot Queue",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        48,
+        96
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "f2577a95-c6a1-4c36-b68c-d547017a35f7",
+      "name": "T0H · Manual HubSpot Claim",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        48,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT public.engine1_c05_claim_v1('hubspot') AS job;",
+        "options": {}
+      },
+      "id": "2d0352ad-8ad5-42ef-a601-4ae1c98638a1",
+      "name": "H1 · Claim HubSpot Job",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        336,
+        144
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Qck2ApAtQoYZ4CnL",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "4809e05e-bc0c-4247-9e06-99f9413b38b3",
+              "leftValue": "={{ String($json.job?.action) }}",
+              "rightValue": "work",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "0dc0f548-77e2-4775-b76d-67c20525f443",
+      "name": "H2 · HubSpot Work Due?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        592,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const j=$input.first().json.job;\nconst base='https://api.hubapi.com/crm/v3/objects/contacts';\nconst id=String(j.provider_contact_id||'');\nconst attrs=['email','phone','firstname','lastname','hubspot_owner_id','engine1_contact_id','engine1_last_lead_id','engine1_lead_source','engine1_qualification','engine1_engagement','engine1_intent','engine1_priority','engine1_score'];\nconst props={engine1_contact_id:String(j.contact_id),engine1_last_lead_id:String(j.lead_id),engine1_lead_source:String(j.source||'').slice(0,200),engine1_qualification:String(j.qualification||'').slice(0,240),engine1_engagement:String(j.engagement||'none').slice(0,80),engine1_intent:String(j.intent||'').slice(0,80),engine1_priority:String(j.priority||'').slice(0,50),engine1_score:j.score==null?'':String(j.score),firstname:String(j.first_name||'').slice(0,100)};\nif(j.last_name)props.lastname=String(j.last_name).slice(0,100);\nif(j.email)props.email=String(j.email).trim().toLowerCase();\nif(j.phone)props.phone=String(j.phone).trim();\n// An unassigned contact remains unowned; never fabricate an owner ID.\nif(j.owner_external_id)props.hubspot_owner_id=String(j.owner_external_id);\nlet request;\nif(id){request={method:'GET',url:base+'/'+encodeURIComponent(id)+'?properties='+attrs.join(','),body:{},mode:'saved_id'};}\nelse{\n const groups=[];\n if(j.email)groups.push({filters:[{propertyName:'email',operator:'EQ',value:String(j.email).trim().toLowerCase()}]});\n if(j.phone)groups.push({filters:[{propertyName:'phone',operator:'EQ',value:String(j.phone)}]});\n request={method:'POST',url:base+'/search',body:{filterGroups:groups,properties:attrs,limit:10},mode:'identity_search'};\n}\nreturn [{json:{job:j,request,props}}];"
+      },
+      "id": "5870967f-b6b8-4b2d-9f02-cdcc2390c93e",
+      "name": "H3 · Prepare HubSpot Identity Lookup",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        848,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "method": "={{ $json.request.method }}",
+        "url": "={{ $json.request.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.request.body }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "5653aaf2-956a-405f-a671-ae1ba588b5b6",
+      "name": "H4 · HubSpot Read Contact",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1104,
+        96
+      ],
+      "notesInFlow": true,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "H4pZ7p5XoOPxB7IE",
+          "name": "Hubspot h-auth"
+        }
+      },
+      "notes": "Assign a provider-specific Header Auth credential. Authorization: Bearer <token>. Never put tokens in code."
+    },
+    {
+      "parameters": {
+        "jsCode": "const p=$('H3 · Prepare HubSpot Identity Lookup').first().json,j=p.job,req=p.request,props=p.props;\nconst r=$input.first().json||{};let body=r.body||{};\nif(typeof body==='string'){try{body=JSON.parse(body)}catch{body={}}}\nconst status=Number(r.statusCode||r.response?.statusCode||0);\nconst fail=(result,error)=>[{json:{next:'finish',result,error:String(error).slice(0,100),http_status:status,provider_id:null,outbox_id:j.outbox_id,token:j.token}}];\nif(!status)return fail('retryable','hubspot_read_transport_error');\nif([401,403].includes(status))return fail('auth','hubspot_read_auth_'+status);\nif(status===429||status>=500)return fail('retryable','hubspot_read_retry_'+status);\nif(req.mode==='saved_id'&&status===404)return fail('identity_conflict','hubspot_saved_id_not_found');\nif(status!==200)return fail('permanent','hubspot_read_http_'+status);\nconst results=req.mode==='saved_id'?[body]:Array.isArray(body.results)?body.results:[];\nif(results.length>1)return fail('identity_conflict','hubspot_multiple_identity_matches');\nconst o=results[0]||null;\nlet provider_id=o?String(o.id||''):'';\nif(o&&!provider_id)return fail('unknown','hubspot_read_missing_record_id');\nif(o){\n const actual=o.properties||{};\n if(actual.engine1_contact_id&&String(actual.engine1_contact_id)!==String(j.contact_id))return fail('identity_conflict','hubspot_contact_id_conflict');\n if(j.email&&actual.email&&String(actual.email).toLowerCase()!==String(j.email).toLowerCase())return fail('identity_conflict','hubspot_email_conflict');\n // Exact identity search includes phone, so a record with a different email is not adopted.\n if(req.mode==='saved_id'&&String(j.provider_contact_id)!==provider_id)return fail('identity_conflict','hubspot_saved_id_mismatch');\n const same=Object.entries(props).every(([k,v])=>String(actual[k]??'')===String(v??''))&&\n   (j.owner_external_id||'')===String(actual.hubspot_owner_id||'');\n if(same)return [{json:{next:'finish',result:'done',error:null,http_status:200,provider_id,outbox_id:j.outbox_id,token:j.token}}];\n}\nconst method=o?'PATCH':'POST';\nconst url=o?'https://api.hubapi.com/crm/v3/objects/contacts/'+encodeURIComponent(provider_id):\n 'https://api.hubapi.com/crm/v3/objects/contacts/batch/upsert';\nconst writeProps={...props};\nif(o&&!j.owner_external_id&&o.properties?.hubspot_owner_id)writeProps.hubspot_owner_id=''; // clear stale owner on known record\nconst b=o?{properties:writeProps}:{inputs:[{id:String(j.contact_id),idProperty:'engine1_contact_id',properties:writeProps}]};\nreturn [{json:{next:'write',outbox_id:j.outbox_id,token:j.token,expected_id:provider_id,method,url,request_body:b,mode:o?'patch':'unique_upsert'}}];"
+      },
+      "id": "1908a561-1f1f-43f4-8b09-44b36284b0c1",
+      "name": "H5 · Resolve HubSpot Match or Conflict",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1360,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "f4d4ec21-17dd-4008-b0e4-bb7ce3d3a85f",
+              "leftValue": "={{ String($json.next) }}",
+              "rightValue": "write",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cb703829-6abb-492c-aef6-d7f5c7811cbe",
+      "name": "H6 · HubSpot Write Required?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1616,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "method": "={{ $json.method }}",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.request_body }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "9bdaa56e-2e5a-433b-a8d5-7025032940a0",
+      "name": "H7 · HubSpot Create or Update",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1888,
+        0
+      ],
+      "notesInFlow": true,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "H4pZ7p5XoOPxB7IE",
+          "name": "Hubspot h-auth"
+        }
+      },
+      "notes": "Assign a provider-specific Header Auth credential. Authorization: Bearer <token>. Never put tokens in code."
+    },
+    {
+      "parameters": {
+        "jsCode": "const d=$('H5 · Resolve HubSpot Match or Conflict').first().json;\nconst r=$input.first().json||{};let b=r.body||{};if(typeof b==='string'){try{b=JSON.parse(b)}catch{b={}}}\nconst s=Number(r.statusCode||r.response?.statusCode||0);\nlet id='';let result='unknown',error='hubspot_write_unknown';\nif([200,201].includes(s)){\n const candidate=d.mode==='unique_upsert'?(Array.isArray(b.results)?b.results[0]:null):b;\n id=String(candidate?.id||'');\n if(id&&(d.expected_id===''||id===d.expected_id)){result='done';error=null;}\n else {result='unknown';error='hubspot_success_missing_or_changed_id';}\n}else if(s===429){result='retryable';error='hubspot_rate_limited';}\nelse if([401,403].includes(s)){result='auth';error='hubspot_auth_'+s;}\nelse if([409,422].includes(s)){result='identity_conflict';error='hubspot_identity_or_property_conflict_'+s;}\nelse if(s>=400&&s<500){result='permanent';error='hubspot_write_http_'+s;}\nelse if(s>=500||!s){result='unknown';error='hubspot_write_ambiguous_'+(s||'transport');}\nreturn [{json:{outbox_id:d.outbox_id,token:d.token,provider_id:id||null,result,error,http_status:s||null}}];"
+      },
+      "id": "661d7762-1d39-4b4f-a6bb-c166332c8311",
+      "name": "H8 · Classify HubSpot Write",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2128,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT public.engine1_c05_finish_v1($1::uuid,$2::uuid,$3::text,$4::text,$5::text,$6::integer) AS result;",
+        "options": {
+          "queryReplacement": "={{ [ $json.outbox_id, $json.token, $json.result, $json.provider_id || null, $json.error || null, $json.http_status || null ] }}"
+        }
+      },
+      "id": "39738510-bf04-4fd6-818b-ad2f1b2ad45a",
+      "name": "H9 · Finish HubSpot Leg",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2416,
+        96
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Qck2ApAtQoYZ4CnL",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "69ecd463-6014-4abd-bea5-05b5a4859cfe",
+      "name": "T2 · Every Minute / GHL Queue",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        368,
+        512
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT public.engine1_c05_claim_v1('ghl') AS job;",
+        "options": {}
+      },
+      "id": "3093c01f-fa65-4841-8492-9c8d7bfc4e4f",
+      "name": "G1 · Claim GHL Job",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        656,
+        576
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Qck2ApAtQoYZ4CnL",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "a61c6c4e-8827-4509-b116-1b0bf58c29d6",
+              "leftValue": "={{ String($json.job?.action) }}",
+              "rightValue": "work",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a9a8c0a3-a70b-43d8-ba92-baa8f62af5fe",
+      "name": "G2 · GHL Work Due?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        912,
+        576
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const j=$input.first().json.job;\nconst base='https://services.leadconnectorhq.com';\nconst loc=String(j.ghl_location_id||'');const id=String(j.provider_contact_id||'');\nconst dup=(key,val)=>base+'/contacts/search/duplicate?locationId='+encodeURIComponent(loc)+'&'+key+'='+encodeURIComponent(String(val));\nconst u1=id?base+'/contacts/'+encodeURIComponent(id):j.email?dup('email',j.email):dup('number',j.phone);\n// A separate second read catches email-vs-phone split identity collisions.\nconst u2=j.phone?dup('number',j.phone):u1;\nreturn [{json:{job:j,lookup_mode:id?'saved_id':'duplicate',lookup1:u1,lookup2:u2}}];"
+      },
+      "id": "48bf0fac-e0ca-44ae-81dc-95acfc3c8dff",
+      "name": "G3 · Prepare GHL Identity Lookups",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1168,
+        512
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.lookup1 }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Version",
+              "value": "2021-07-28"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "b4bc3fca-2e6b-4f91-92cb-83d6674a77a2",
+      "name": "G4 · GHL Read Saved ID or Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1424,
+        464
+      ],
+      "notesInFlow": true,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "gvT9wDo6tjMSSZKa",
+          "name": "ENGINE1 - GoHighLevel"
+        }
+      },
+      "notes": "Assign a provider-specific Header Auth credential. Authorization: Bearer <token>. Never put tokens in code."
+    },
+    {
+      "parameters": {
+        "url": "={{ $('G3 · Prepare GHL Identity Lookups').first().json.lookup2 }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Version",
+              "value": "2021-07-28"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "b7340c68-6663-483b-86de-053acf98c115",
+      "name": "G5 · GHL Check Phone Identity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1680,
+        464
+      ],
+      "notesInFlow": true,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "gvT9wDo6tjMSSZKa",
+          "name": "ENGINE1 - GoHighLevel"
+        }
+      },
+      "notes": "Assign a provider-specific Header Auth credential. Authorization: Bearer <token>. Never put tokens in code."
+    },
+    {
+      "parameters": {
+        "jsCode": "const p=$('G3 · Prepare GHL Identity Lookups').first().json,j=p.job;\nconst r1=$('G4 · GHL Read Saved ID or Email').first().json||{},r2=$input.first().json||{};\nconst un=r=>{let b=r.body||{};if(typeof b==='string'){try{b=JSON.parse(b)}catch{b={}}}return {status:Number(r.statusCode||r.response?.statusCode||0),body:b}};\nconst a=un(r1),b=un(r2);\nconst fail=(result,error,http_status)=>[{json:{next:'finish',result,error,http_status,provider_id:null,outbox_id:j.outbox_id,token:j.token}}];\nfor(const z of [a,b]){\n if(!z.status)return fail('retryable','ghl_identity_transport_error',null);\n if([401,403].includes(z.status))return fail('auth','ghl_identity_auth_'+z.status,z.status);\n if(z.status===429||z.status>=500)return fail('retryable','ghl_identity_retry_'+z.status,z.status);\n if(z.status!==200)return fail(z.status===404&&p.lookup_mode==='saved_id'?'identity_conflict':'permanent',\n     'ghl_identity_http_'+z.status,z.status);\n}\nconst c1=a.body?.contact||null,c2=b.body?.contact||null;\nconst id1=String(c1?.id||''),id2=String(c2?.id||'');\nif(id1&&id2&&id1!==id2)return fail('identity_conflict','ghl_email_phone_split_identity',200);\nif(p.lookup_mode==='saved_id'&&!id1)return fail('identity_conflict','ghl_saved_id_missing',200);\nconst c=c1||c2||null,id=String(c?.id||'');\nif(j.provider_contact_id&&id&&id!==String(j.provider_contact_id))return fail('identity_conflict','ghl_saved_id_conflict',200);\nif(c&&c.locationId&&String(c.locationId)!==String(j.ghl_location_id))return fail('identity_conflict','ghl_wrong_location',200);\nif(c&&j.email&&c.email&&String(c.email).toLowerCase()!==String(j.email).toLowerCase())return fail('identity_conflict','ghl_email_conflict',200);\nconst fields=j.ghl_fields||{};\nconst values={engine1_contact_id:String(j.contact_id),last_lead_id:String(j.lead_id),\n qualification:String(j.qualification||'').slice(0,240),engagement:String(j.engagement||'none'),\n intent:String(j.intent||''),priority:String(j.priority||''),score:j.score==null?'':String(j.score)};\nconst customFields=Object.entries(values).map(([k,value])=>({id:String(fields[k]),fieldValue:String(value)}));\nconst actual=new Map((Array.isArray(c?.customFields)?c.customFields:[]).map(x=>[String(x.id||''),String(x.value??x.fieldValue??'')]));\nconst existingEngine1Id=actual.get(String(fields.engine1_contact_id));\nif(existingEngine1Id&&existingEngine1Id!==String(j.contact_id))return fail('identity_conflict','ghl_engine1_identity_conflict',200);\nconst payload={firstName:String(j.first_name||'Customer').slice(0,100),source:String(j.source||'').slice(0,150),customFields};\nif(j.last_name)payload.lastName=String(j.last_name).slice(0,100);\nif(j.email)payload.email=String(j.email);\nif(j.phone)payload.phone=String(j.phone);\nif(!id)payload.locationId=String(j.ghl_location_id);\nif(j.owner_external_id)payload.assignedTo=String(j.owner_external_id);\nelse if(id&&c?.assignedTo)payload.assignedTo=null; // clear stale owner on known existing contact\nif(!id)payload.createNewIfDuplicateAllowed=false;\nconst same=id&&String(c?.firstName||'')===String(payload.firstName||'')&&\n String(c?.source||'')===String(payload.source||'')&&\n (!j.owner_external_id?(!c?.assignedTo):String(c?.assignedTo||'')===String(j.owner_external_id))&&\n Object.entries(values).every(([k,val])=>actual.get(String(fields[k]))===String(val));\nif(same)return [{json:{next:'finish',result:'done',error:null,http_status:200,provider_id:id,outbox_id:j.outbox_id,token:j.token}}];\nreturn [{json:{next:'write',outbox_id:j.outbox_id,token:j.token,expected_id:id,\n method:id?'PUT':'POST',url:id?'https://services.leadconnectorhq.com/contacts/'+encodeURIComponent(id):\n 'https://services.leadconnectorhq.com/contacts/upsert',request_body:payload}}];"
+      },
+      "id": "0453263a-b40c-4845-b934-d7cd0f55caa3",
+      "name": "G6 · Resolve GHL Match or Conflict",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1936,
+        464
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "67d4c6fd-b416-4eed-9159-f5f5b3a3e7c5",
+              "leftValue": "={{ String($json.next) }}",
+              "rightValue": "write",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "744867d8-b472-4eeb-ba4a-bf540735bf9b",
+      "name": "G7 · GHL Write Required?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2192,
+        464
+      ]
+    },
+    {
+      "parameters": {
+        "method": "={{ $json.method }}",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Version",
+              "value": "2021-07-28"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.request_body }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "4be26c7b-e0c5-42bd-8fb7-d32a0d1c4867",
+      "name": "G8 · GHL Upsert or Update",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2432,
+        368
+      ],
+      "notesInFlow": true,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "gvT9wDo6tjMSSZKa",
+          "name": "ENGINE1 - GoHighLevel"
+        }
+      },
+      "notes": "Assign a provider-specific Header Auth credential. Authorization: Bearer <token>. Never put tokens in code."
+    },
+    {
+      "parameters": {
+        "jsCode": "const d=$('G6 · Resolve GHL Match or Conflict').first().json;\nconst r=$input.first().json||{};let b=r.body||{};if(typeof b==='string'){try{b=JSON.parse(b)}catch{b={}}}\nconst s=Number(r.statusCode||r.response?.statusCode||0);\nlet id=String(b.contact?.id||'');let result='unknown',error='ghl_write_unknown';\nif([200,201].includes(s)&&b.succeeded!==false&&b.succeded!==false){\n if(id&&(!d.expected_id||d.expected_id===id)){result='done';error=null;}\n else {result='unknown';error='ghl_success_missing_or_changed_contact_id';}\n}else if(s===429){result='retryable';error='ghl_rate_limited';}\nelse if([401,403].includes(s)){result='auth';error='ghl_auth_'+s;}\nelse if([409,422].includes(s)){result='identity_conflict';error='ghl_duplicate_or_field_conflict_'+s;}\nelse if(s>=400&&s<500){result='permanent';error='ghl_write_http_'+s;}\nelse if(s>=500||!s){result='unknown';error='ghl_write_ambiguous_'+(s||'transport');}\nreturn [{json:{outbox_id:d.outbox_id,token:d.token,provider_id:id||null,result,error,http_status:s||null}}];"
+      },
+      "id": "42dd964a-976d-4818-bc59-998ba1a04ff5",
+      "name": "G9 · Classify GHL Write",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2688,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT public.engine1_c05_finish_v1($1::uuid,$2::uuid,$3::text,$4::text,$5::text,$6::integer) AS result;",
+        "options": {
+          "queryReplacement": "={{ [ $json.outbox_id, $json.token, $json.result, $json.provider_id || null, $json.error || null, $json.http_status || null ] }}"
+        }
+      },
+      "id": "1cfbc9bd-bc60-493b-9b09-730427cf4fa4",
+      "name": "G10 · Finish GHL Leg",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2928,
+        464
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Qck2ApAtQoYZ4CnL",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 2
+            }
+          ]
+        }
+      },
+      "id": "5e2e2266-644b-4853-aada-7db4de8384bd",
+      "name": "T3 · Every 2 Minutes / CRM Reconcile",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        80,
+        736
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT public.engine1_c05_reconcile_v1(30) AS result;",
+        "options": {}
+      },
+      "id": "14cab1f1-b251-4387-bd9e-cb46cb635f5a",
+      "name": "R1 · Queue CRM Field and Owner Checks",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        384,
+        800
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Qck2ApAtQoYZ4CnL",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes"
+            }
+          ]
+        }
+      },
+      "id": "96cb5153-a932-4fb5-83a4-98c15224c1b6",
+      "name": "T4 · Every 5 Minutes / Lease Recovery",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        800,
+        784
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT public.engine1_c05_recover_v1(30) AS result;",
+        "options": {}
+      },
+      "id": "e6098368-5758-4e5b-90cd-2fc323c60168",
+      "name": "R2 · Expired CRM Send → Unknown + Canvas 06",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1104,
+        848
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Qck2ApAtQoYZ4CnL",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "T1 · Every Minute / HubSpot Queue": {
+      "main": [
+        [
+          {
+            "node": "H1 · Claim HubSpot Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "T0H · Manual HubSpot Claim": {
+      "main": [
+        [
+          {
+            "node": "H1 · Claim HubSpot Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "H1 · Claim HubSpot Job": {
+      "main": [
+        [
+          {
+            "node": "H2 · HubSpot Work Due?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "H2 · HubSpot Work Due?": {
+      "main": [
+        [
+          {
+            "node": "H3 · Prepare HubSpot Identity Lookup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "H3 · Prepare HubSpot Identity Lookup": {
+      "main": [
+        [
+          {
+            "node": "H4 · HubSpot Read Contact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "H4 · HubSpot Read Contact": {
+      "main": [
+        [
+          {
+            "node": "H5 · Resolve HubSpot Match or Conflict",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "H5 · Resolve HubSpot Match or Conflict": {
+      "main": [
+        [
+          {
+            "node": "H6 · HubSpot Write Required?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "H6 · HubSpot Write Required?": {
+      "main": [
+        [
+          {
+            "node": "H7 · HubSpot Create or Update",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "H9 · Finish HubSpot Leg",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "H7 · HubSpot Create or Update": {
+      "main": [
+        [
+          {
+            "node": "H8 · Classify HubSpot Write",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "H8 · Classify HubSpot Write": {
+      "main": [
+        [
+          {
+            "node": "H9 · Finish HubSpot Leg",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "T2 · Every Minute / GHL Queue": {
+      "main": [
+        [
+          {
+            "node": "G1 · Claim GHL Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "G1 · Claim GHL Job": {
+      "main": [
+        [
+          {
+            "node": "G2 · GHL Work Due?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "G2 · GHL Work Due?": {
+      "main": [
+        [
+          {
+            "node": "G3 · Prepare GHL Identity Lookups",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "G3 · Prepare GHL Identity Lookups": {
+      "main": [
+        [
+          {
+            "node": "G4 · GHL Read Saved ID or Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "G4 · GHL Read Saved ID or Email": {
+      "main": [
+        [
+          {
+            "node": "G5 · GHL Check Phone Identity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "G5 · GHL Check Phone Identity": {
+      "main": [
+        [
+          {
+            "node": "G6 · Resolve GHL Match or Conflict",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "G6 · Resolve GHL Match or Conflict": {
+      "main": [
+        [
+          {
+            "node": "G7 · GHL Write Required?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "G7 · GHL Write Required?": {
+      "main": [
+        [
+          {
+            "node": "G8 · GHL Upsert or Update",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "G10 · Finish GHL Leg",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "G8 · GHL Upsert or Update": {
+      "main": [
+        [
+          {
+            "node": "G9 · Classify GHL Write",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "G9 · Classify GHL Write": {
+      "main": [
+        [
+          {
+            "node": "G10 · Finish GHL Leg",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "T3 · Every 2 Minutes / CRM Reconcile": {
+      "main": [
+        [
+          {
+            "node": "R1 · Queue CRM Field and Owner Checks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "T4 · Every 5 Minutes / Lease Recovery": {
+      "main": [
+        [
+          {
+            "node": "R2 · Expired CRM Send → Unknown + Canvas 06",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "T4oF1iLesIwWu1I7",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "27d84f21-85f7-462e-bb9b-7f8b640160c4",
+  "meta": {
+    "instanceId": "a9ffeeb0672bc04438a2517478a96e439ea10f4d2d22d78a8f5fe1f2de5159ef"
+  },
+  "nodeGroups": [],
+  "id": "9fRu64H79kOoaO09",
+  "tags": []
+}

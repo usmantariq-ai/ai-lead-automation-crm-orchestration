@@ -1,0 +1,652 @@
+{
+  "name": "ENGINE1 — Canvas 06 — Watchdog, Error Handling & Recovery v1.0",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "8bb24aea-531f-45a2-838a-fbff18140a74",
+      "name": "T1 · Every Minute / Safe Recovery",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -576,
+        -240
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "8a4e1d30-0461-412c-83f0-29d3c5a9638a",
+      "name": "T0R · Manual Recovery Check",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -576,
+        -64
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT public.engine1_c06_recover_tick_v1(25) AS result;",
+        "options": {}
+      },
+      "id": "cd68be55-a76d-4a2c-92dd-c39a01444a46",
+      "name": "R1 · Recover Leases & Unsafe States",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -256,
+        -160
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Qck2ApAtQoYZ4CnL",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "802c713e-978d-4972-8c5e-5946bd8f19e5",
+      "name": "T2 · Every Minute / SLA Watch",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -320,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT public.engine1_c06_sla_tick_v1(25) AS result;",
+        "options": {}
+      },
+      "id": "afed9354-e4b3-44ac-8e67-69410974e5bd",
+      "name": "S1 · Delegate SLA to Canvas 04",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        0,
+        144
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Qck2ApAtQoYZ4CnL",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes"
+            }
+          ]
+        }
+      },
+      "id": "4fe7ebd2-7dcf-4198-9472-b8c33c604fa6",
+      "name": "T3 · Every 5 Minutes / Monitor",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -560,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT public.engine1_c06_scan_v1(50) AS result;",
+        "options": {}
+      },
+      "id": "c5aa3cdc-b9fa-4e52-8afb-2b2967a35936",
+      "name": "M1 · Scan Pending & Failed Work",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -240,
+        336
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Qck2ApAtQoYZ4CnL",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "a70a9556-0546-4464-b098-84d7e94fad83",
+      "name": "T4 · Every Minute / Alert Dispatch",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -656,
+        544
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT public.engine1_c06_claim_alert_v1(50) AS job;",
+        "options": {}
+      },
+      "id": "4f68be6b-2c6c-4a5f-b453-8a090a39278d",
+      "name": "A1 · Ingest & Claim Durable Incident",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -336,
+        624
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Qck2ApAtQoYZ4CnL",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "4ba6aa3c-623d-5a4e-b37d-e7b3679d2ec7",
+              "leftValue": "={{ String($json.job?.action || \"\") }}",
+              "rightValue": "work",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "38260be3-29b6-48de-8552-d03cad9021f2",
+      "name": "A2 · Alert Work Authorized?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -96,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT public.engine1_c06_begin_alert_v1($1::uuid,$2::uuid) AS decision;",
+        "options": {
+          "queryReplacement": "={{ [ $json.job.incident_id, $json.job.token ] }}"
+        }
+      },
+      "id": "18959a8e-24ac-4da3-9bb0-a88b8325b313",
+      "name": "A3 · Begin Slack Send Barrier",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        160,
+        544
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Qck2ApAtQoYZ4CnL",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "b9f0f457-0178-54a2-b446-04989d0217b3",
+              "leftValue": "={{ String($json.decision?.action || \"\") }}",
+              "rightValue": "send",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "e38768d1-e046-43f8-8491-a1aa52aa682f",
+      "name": "A4 · Slack Send Allowed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        400,
+        544
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d=$input.first().json.decision||{};\nconst clean=(value,n=100)=>String(value??'').replace(/[\\r\\n\\t<>@&]/g,' ').replace(/\\s+/g,' ').trim().slice(0,n);\nconst detail=(d.detail && typeof d.detail==='object')?d.detail:{};\nconst sev=clean(d.severity,12).toUpperCase();\nconst event=clean(d.event_type,80);\nconst reason=clean(detail.reason||detail.error_code||detail.status||detail.source_event||detail.error_kind||'',100);\nconst lead=clean(d.lead_id||'system',40);\nconst incident=clean(d.incident_id,40);\nconst message=['ENGINE1 WATCHDOG ['+sev+']', 'Event: '+event, 'Lead: '+lead, 'Incident: '+incident];\nif(reason)message.push('Context: '+reason);\nmessage.push('Review PostgreSQL incident and source state before any replay. Unknown provider outcomes must NOT be resent blindly.');\nreturn [{json:{incident_id:d.incident_id,token:d.token,channel:d.channel,\n slack_body:{channel:d.channel,text:message.join('\\n'),unfurl_links:false,unfurl_media:false,parse:'none',link_names:false}}}];"
+      },
+      "id": "64c39514-d50c-4eb6-a2cb-5d3f0c0a5573",
+      "name": "A5 · Compose Sanitized Slack Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        656,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.postMessage",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json; charset=utf-8"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.slack_body }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "bafaa635-3ac4-4fe4-9344-652814617a0b",
+      "name": "A6 · Slack / Post Operator Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        928,
+        480
+      ],
+      "credentials": {
+        "slackApi": {
+          "id": "8ZiRgBNsWRuYv7v1",
+          "name": "Slack account"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "notes": "Assign Slack Bot HTTP Header Auth (Authorization: Bearer token) in n8n credentials. Never paste tokens into JSON."
+    },
+    {
+      "parameters": {
+        "jsCode": "const p=$('A5 · Compose Sanitized Slack Alert').first().json;\nconst r=$input.first().json||{};\nlet b=r.body||{};\nif(typeof b==='string'){try{b=JSON.parse(b)}catch{b={}}}\nconst status=Number(r.statusCode||r.response?.statusCode||0);\nconst e=String(b.error||'').toLowerCase();\nconst safe=(s)=>String(s||'').replace(/[^a-z0-9_\\-]/gi,'_').slice(0,75);\nlet result='unknown',code='slack_transport_or_ambiguous',channel=null,ts=null;\nif(status===200 && b.ok===true && b.ts && b.channel){\n result='delivered';code=null;channel=String(b.channel);ts=String(b.ts);\n}else if(status===429 || (status===200 && ['ratelimited','rate_limited'].includes(e))){\n result='retryable';code='slack_rate_limited';\n}else if(status===401||status===403||['invalid_auth','not_authed','missing_scope','token_revoked','account_inactive'].includes(e)){\n result='auth';code='slack_auth_'+safe(e||status);\n}else if(status===200 && b.ok===false){\n result='permanent';code='slack_rejected_'+safe(e||'unknown');\n}else if(status>=400&&status<500){\n result='permanent';code='slack_http_'+status;\n}else if(status>=500 || !status || (b.ok===true && (!b.ts||!b.channel))){\n result='unknown';code='slack_unknown_'+(status||'transport');\n}\nreturn [{json:{incident_id:p.incident_id,token:p.token,result,\n channel,slack_ts:ts,error_code:code,http_status:status||null}}];"
+      },
+      "id": "ecc40f46-f054-4d56-8336-f5cc7887aa36",
+      "name": "A7 · Classify Slack Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1168,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT public.engine1_c06_finish_alert_v1($1::uuid,$2::uuid,$3::text,$4::text,$5::text,$6::text,$7::integer) AS result;",
+        "options": {
+          "queryReplacement": "={{ [ $json.incident_id, $json.token, $json.result, $json.channel || null, $json.slack_ts || null, $json.error_code || null, $json.http_status || null ] }}"
+        }
+      },
+      "id": "167a85e4-a7dc-410e-a48a-04239321d999",
+      "name": "A8 · Finish Alert Without Blind Retry",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1424,
+        480
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Qck2ApAtQoYZ4CnL",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "ce3bbf2a-a02a-495b-ba3b-ded3e5696317",
+      "name": "T5 · Every 15 Minutes / Health",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -640,
+        848
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT public.engine1_c06_health_v1() AS health;",
+        "options": {}
+      },
+      "id": "ea611991-d374-4d02-af23-9ac16646a566",
+      "name": "H1 · Read System Health & Backlog",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -320,
+        912
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Qck2ApAtQoYZ4CnL",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "68c45f9c-6332-46fb-b2c3-f3930afd3abb",
+      "name": "E1 · n8n Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        96,
+        848
+      ],
+      "notes": "Requires selecting this workflow as Error Workflow in each source workflow Settings; no secret or request body is captured."
+    },
+    {
+      "parameters": {
+        "jsCode": "const x=$input.first().json||{};\nconst w=x.workflow||{};\nconst ex=x.execution||{};\nconst err=ex.error||x.error||{};\nconst clean=(s,n=100)=>String(s??'').replace(/[^a-z0-9._:\\-]/gi,'_').slice(0,n);\nreturn [{json:{event:{workflow_id:clean(w.id||x.workflowId||'',100),\n execution_id:clean(ex.id||x.executionId||'',100),\n last_node:clean(ex.lastNodeExecuted||x.lastNodeExecuted||'',100),\n error_kind:clean(err.name||err.type||'execution_error',60)}}}];"
+      },
+      "id": "944df4b0-70b0-4038-871d-1702a0600661",
+      "name": "E2 · Sanitize Failed Execution Metadata",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        848
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT public.engine1_c06_record_error_v1($1::jsonb) AS result;",
+        "options": {
+          "queryReplacement": "={{ [ JSON.stringify($json.event) ] }}"
+        }
+      },
+      "id": "11b58054-45ac-4877-9cfa-c6ea27473384",
+      "name": "E3 · Persist Deduplicated Error Incident",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        688,
+        848
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Qck2ApAtQoYZ4CnL",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "# ENGINE1 — ERROR HANDLING / GLOBAL FAILURE WORKFLOW\n\n**Centralized error handling for ENGINE1.** Capture failed executions across all seven canvases, record error details, identify the affected workflow and execution, and notify administrators through Slack.\n\n**PostgreSQL is the source of truth.** Preserve failure history, prevent duplicate alerts, and support controlled investigation and recovery. Never automatically retry non-idempotent operations without safeguards.\n\n**Import defaults: workflow inactive until credentials, error triggers, notifications, and recovery behavior are verified.** No secrets or sensitive customer data in logs or exported JSON.",
+        "height": 290,
+        "width": 690
+      },
+      "id": "2e4f702b-cd19-4b6d-97b2-89aa92ef6e2f",
+      "name": "ABOUT · Canvas 05",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        144,
+        -192
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "T1 · Every Minute / Safe Recovery": {
+      "main": [
+        [
+          {
+            "node": "R1 · Recover Leases & Unsafe States",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "T0R · Manual Recovery Check": {
+      "main": [
+        [
+          {
+            "node": "R1 · Recover Leases & Unsafe States",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "T2 · Every Minute / SLA Watch": {
+      "main": [
+        [
+          {
+            "node": "S1 · Delegate SLA to Canvas 04",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "T3 · Every 5 Minutes / Monitor": {
+      "main": [
+        [
+          {
+            "node": "M1 · Scan Pending & Failed Work",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "T4 · Every Minute / Alert Dispatch": {
+      "main": [
+        [
+          {
+            "node": "A1 · Ingest & Claim Durable Incident",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "A1 · Ingest & Claim Durable Incident": {
+      "main": [
+        [
+          {
+            "node": "A2 · Alert Work Authorized?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "A2 · Alert Work Authorized?": {
+      "main": [
+        [
+          {
+            "node": "A3 · Begin Slack Send Barrier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "A3 · Begin Slack Send Barrier": {
+      "main": [
+        [
+          {
+            "node": "A4 · Slack Send Allowed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "A4 · Slack Send Allowed?": {
+      "main": [
+        [
+          {
+            "node": "A5 · Compose Sanitized Slack Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "A5 · Compose Sanitized Slack Alert": {
+      "main": [
+        [
+          {
+            "node": "A6 · Slack / Post Operator Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "A6 · Slack / Post Operator Alert": {
+      "main": [
+        [
+          {
+            "node": "A7 · Classify Slack Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "A7 · Classify Slack Result": {
+      "main": [
+        [
+          {
+            "node": "A8 · Finish Alert Without Blind Retry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "T5 · Every 15 Minutes / Health": {
+      "main": [
+        [
+          {
+            "node": "H1 · Read System Health & Backlog",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "E1 · n8n Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "E2 · Sanitize Failed Execution Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "E2 · Sanitize Failed Execution Metadata": {
+      "main": [
+        [
+          {
+            "node": "E3 · Persist Deduplicated Error Incident",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true
+  },
+  "versionId": "2b5dfdf6-a62a-4996-a56b-c9d40d90b2a8",
+  "meta": {
+    "instanceId": "a9ffeeb0672bc04438a2517478a96e439ea10f4d2d22d78a8f5fe1f2de5159ef"
+  },
+  "nodeGroups": [],
+  "id": "T4oF1iLesIwWu1I7",
+  "tags": []
+}

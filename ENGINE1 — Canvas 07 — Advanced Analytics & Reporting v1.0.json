@@ -1,0 +1,494 @@
+{
+  "name": "ENGINE1 — Canvas 07 — Advanced Analytics & Reporting v1.0",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "# ENGINE1 — CANVAS 07 | ADVANCED ANALYTICS & REPORTING v1.0\n**Read from PostgreSQL, not n8n success flags.** Compute source conversion, actual Resend accepted/delivered timestamps, AI coverage, nurture state and verified engagement, handoff claim latency, SLA transitions, CRM sync state, watchdog failures, and bottlenecks.\n\n**Migration required:** `ENGINE1_Canvas07_Required_Migration_v1.0.sql` (run in DBeaver after backup). Feature flag `c07_enabled` starts OFF. Assign the existing Postgres credential to SQL nodes.\n\n**Safety:** Daily schedule deliberately DISABLED; report snapshots are idempotent per Karachi day; no external API calls, no emails, no Slack sends. AI accuracy, causal nurture uplift, AI cost, and actual human-response speed are NULL/unavailable until reliable ground-truth tracking exists.",
+        "height": 360,
+        "width": 700
+      },
+      "id": "1a2da817-548c-40c3-b32a-97cede0ea4b8",
+      "name": "ABOUT · Canvas 07",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -592,
+        -144
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### Source of truth\n- **Intake/source:** `leads`, `event_log`, durable dispatch outbox.\n- **Acknowledgment speed:** `engine1_c02_messages.accepted_at - leads.t_received` (provider acceptance ≠ delivery).\n- **Actual delivery:** `engine1_c02_messages.delivered_at`.\n- **AI:** persisted C03 scores, priority and AI status; *accuracy needs human labels* and is not calculated.\n- **Nurture:** enrollments, touches and verified signals; descriptive, no causal uplift claim.\n- **Sales/SLA:** handoffs and SLA history, claimed_at − assigned_at; human response time requires further timestamp instrumentation.\n- **CRM:** C05 provider contact state + per-lead legacy sync legs, reported separately.\n- **Failure health:** C06 incidents and dispatch queue.\n- **Trend:** last 30 stored daily snapshots.",
+        "height": 340,
+        "width": 650
+      },
+      "id": "bbc39f99-3ed2-449c-ba5b-8b35f046c264",
+      "name": "METRIC SEMANTICS · Not invented",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        128,
+        -128
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "4e56e5d0-ff46-4b3d-8655-cdb1973eda93",
+      "name": "T0 · Manual Report Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -544,
+        288
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 1,
+              "triggerAtMinute": 15
+            }
+          ]
+        }
+      },
+      "id": "318bb512-0d9e-46ee-8e53-15e7d702cd8d",
+      "name": "T1 · Daily 01:15 PKT (DISABLED)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        -544,
+        496
+      ],
+      "notes": "Disabled until all report/DB validations pass and production scheduling is explicitly approved. Report previous completed Karachi day."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT (clock_timestamp() AT TIME ZONE 'Asia/Karachi')::date::text AS report_day;",
+        "options": {}
+      },
+      "id": "ffec4ce1-1962-4415-b9f6-a91d085810e1",
+      "name": "M0 · Today (Karachi)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -320,
+        288
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Qck2ApAtQoYZ4CnL",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT ((clock_timestamp() AT TIME ZONE 'Asia/Karachi')::date - 1)::text AS report_day;",
+        "options": {}
+      },
+      "id": "a7d89edb-ebac-4d90-90fe-c859e0d75edb",
+      "name": "M1 · Yesterday (Karachi)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -320,
+        496
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Qck2ApAtQoYZ4CnL",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH checks AS (\n SELECT ARRAY_REMOVE(ARRAY[\n  CASE WHEN to_regclass('public.leads') IS NULL THEN 'leads'::text END,\n  CASE WHEN to_regclass('public.event_log') IS NULL THEN 'event_log'::text END,\n  CASE WHEN to_regclass('public.engine1_dispatch_outbox') IS NULL THEN 'engine1_dispatch_outbox'::text END,\n  CASE WHEN to_regclass('public.engine1_c02_messages') IS NULL THEN 'engine1_c02_messages'::text END,\n  CASE WHEN to_regclass('public.engine1_c03_qualifications') IS NULL THEN 'engine1_c03_qualifications'::text END,\n  CASE WHEN to_regclass('public.engine1_c03_enrollments') IS NULL THEN 'engine1_c03_enrollments'::text END,\n  CASE WHEN to_regclass('public.engine1_c03_touches') IS NULL THEN 'engine1_c03_touches'::text END,\n  CASE WHEN to_regclass('public.engine1_c03_signals') IS NULL THEN 'engine1_c03_signals'::text END,\n  CASE WHEN to_regclass('public.engine1_c04_handoffs') IS NULL THEN 'engine1_c04_handoffs'::text END,\n  CASE WHEN to_regclass('public.engine1_c04_sla_history') IS NULL THEN 'engine1_c04_sla_history'::text END,\n  CASE WHEN to_regclass('public.crm_sync_legs') IS NULL THEN 'crm_sync_legs'::text END,\n  CASE WHEN to_regclass('public.engine1_c05_contact_sync') IS NULL THEN 'engine1_c05_contact_sync'::text END,\n  CASE WHEN to_regclass('public.engine1_c06_incidents') IS NULL THEN 'engine1_c06_incidents'::text END,\n  CASE WHEN to_regclass('public.engine1_c07_daily_reports') IS NULL THEN 'engine1_c07_daily_reports'::text END\n ],NULL)::text[] missing\n), flags AS (\n SELECT coalesce((SELECT (config_value#>>'{}')::boolean FROM public.system_state WHERE config_key='c07_enabled'),false) AS enabled,\n        to_regprocedure('public.engine1_c07_refresh_daily_v1(date)') IS NOT NULL AS has_refresh,\n        to_regprocedure('public.engine1_c07_save_insights_v1(date,jsonb)') IS NOT NULL AS has_finalize\n)\nSELECT $1::date::text report_day,\n       CASE WHEN NOT flags.enabled THEN 'disabled'\n            WHEN cardinality(checks.missing)>0 THEN 'missing_tables'\n            WHEN NOT(flags.has_refresh AND flags.has_finalize) THEN 'missing_functions'\n            ELSE 'ready' END AS readiness,\n       checks.missing AS missing_tables,flags.enabled,flags.has_refresh,flags.has_finalize\nFROM checks CROSS JOIN flags;",
+        "options": {
+          "queryReplacement": "={{ [ $json.report_day ] }}"
+        }
+      },
+      "id": "d48a8b20-c8fb-40f8-aada-156dd65f2ab2",
+      "name": "R0 · Readiness & Schema Gate",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -64,
+        368
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Qck2ApAtQoYZ4CnL",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "b0d9b69d-9b2e-5124-8193-bcf7fd988f1a",
+              "leftValue": "={{ String($json.readiness || \"\") }}",
+              "rightValue": "ready",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "26769bb0-a600-4645-b2e6-6f0662e5b5dc",
+      "name": "A1 · Analytics Authorized?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        192,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT public.engine1_c07_refresh_daily_v1($1::date) AS report;",
+        "options": {
+          "queryReplacement": "={{ [ $json.report_day ] }}"
+        }
+      },
+      "id": "b14b962b-ac61-4f40-b94b-dff5d13bbd32",
+      "name": "R1 · Refresh Daily Snapshot",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        432,
+        288
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Qck2ApAtQoYZ4CnL",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "e5c67dc0-5c00-561b-b655-8db3aa635931",
+              "leftValue": "={{ String($json.report?.action || \"\") }}",
+              "rightValue": "stored",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "9655eeeb-0004-4d7d-b2cb-75a826c0e5c3",
+      "name": "A2 · Snapshot Stored?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        656,
+        288
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// All metrics originate from persisted PostgreSQL state, not transient n8n flags.\nconst r = $input.first().json.report || {};\nconst m = r.metrics || {}, q = r.quality || {};\nconst v = (x) => Number.isFinite(Number(x)) ? Number(x) : 0;\nconst issues=[];\nconst push=(severity,code,observation,action)=>issues.push({severity,code,observation,action});\nconst ack=m.acknowledgment||{}, handoff=m.handoff||{}, ai=m.ai_qualification||{};\nconst ops=m.operations||{}, backlog=ops.backlog_as_of_run||{};\nconst nurture=(m.nurturing||{}).touches||{};\nconst n=v((m.intake||{}).leads_received);\nconst requests=v(ack.requests_queued), accepted=v(ack.provider_accepted);\nif(v(backlog.unknown_incidents)>0)push('critical','unknown_outcomes',`${backlog.unknown_incidents} C06 incidents remain unknown; delivery may have happened`,'Inspect provider records and incident state manually; do NOT resend blindly');\nif(v(backlog.overdue_handoffs)>0)push('critical','overdue_handoffs',`${backlog.overdue_handoffs} handoffs are overdue as of this report`,'Inspect Canvas 04 assignments and SLA transitions; verify active reps and manager escalation');\nif(v(backlog.dead_outbox)>0)push('high','dead_dispatch',`${backlog.dead_outbox} durable dispatch jobs are dead`,'Triage outbox errors and known vs unknown provider outcomes before any replay');\nif(requests>0 && accepted<requests)push('high','ack_coverage',`${accepted}/${requests} queued acknowledgment requests have provider acceptance as of this report`,'Check consent, quiet hours, recipient allowlist, disabled SMS, pending jobs, and provider status');\nif(ack.acceptance_p95_minutes !== null && ack.acceptance_p95_minutes !== undefined && v(ack.acceptance_p95_minutes)>10)\n push('medium','ack_latency',`P95 provider-acceptance time ${ack.acceptance_p95_minutes} minutes (heuristic threshold: 10m)`,'Review queue age, quiet-hours deferrals and capacity; this is not an agreed contractual SLA');\nif(v(nurture.unknown)>0)push('high','nurture_unknown',`${nurture.unknown} nurture touches in the intake cohort have unknown delivery outcome`,'Reconcile provider outcomes manually before resending');\nconst states=(m.crm||{}).current_provider_contact_states||[];\nconst bad=states.filter(x=>['blocked','unknown'].includes(String(x.state)));\nconst badN=bad.reduce((s,x)=>s+v(x.count),0);\nif(badN>0)push('high','crm_attention',`${badN} provider-contact sync state(s) blocked or unknown (systemwide snapshot)`,'Review Canvas 05 auth, ownership, provider contact IDs and mismatch evidence');\nif(v(ai.jobs)>0 && v(ai.done)<v(ai.jobs))\n push('medium','qualification_pending',`${v(ai.done)}/${v(ai.jobs)} qualification jobs completed for intake cohort`,'Review fallback, model errors and queued qualification; do not block intake or acknowledgment');\nif(n===0)push('info','no_cohort_data','No leads for the selected Karachi local-day intake cohort','Use Manual Trigger on a date with fixtures, or wait for recorded events');\nif(issues.length===0)push('info','no_detected_bottleneck','No configured operational exception thresholds were crossed','Continue monitoring; this is not proof of zero customer issues');\nconst severityOrder={critical:0,high:1,medium:2,info:3};\nissues.sort((a,b)=>(severityOrder[a.severity]??9)-(severityOrder[b.severity]??9));\nconst lines=[`ENGINE1 DAILY OPERATIONS REPORT | ${r.report_day} | Asia/Karachi`,\n `Lead intake cohort: ${n}; converted as of run: ${v((m.intake||{}).converted_cohort_as_of_run)}`,\n `Acknowledgment: queued ${requests}, accepted ${accepted}, delivered ${v(ack.delivered)}; accepted P50/P95 minutes ${ack.acceptance_p50_minutes??'N/A'}/${ack.acceptance_p95_minutes??'N/A'}`,\n `Handoff: ${v(handoff.handoffs)} records, ${v(handoff.claimed)} claimed; assignment-to-claim P95 ${handoff.assignment_to_claim_p95_minutes??'N/A'} min`,\n `Qualification: ${v(ai.done)}/${v(ai.jobs)} done; average score ${ai.avg_score??'N/A'}; accuracy UNAVAILABLE (no truth labels)`,\n `Nurture: ${v(nurture.delivered)} confirmed delivered, ${v(nurture.unknown)} unknown touches`,\n `Operational: ${v(backlog.open_incidents)} pending C06 incidents, ${v(backlog.unknown_incidents)} unknown, ${v(backlog.dead_outbox)} dead dispatch jobs`,\n ...issues.map((x,i)=>`${i+1}. [${x.severity.toUpperCase()}] ${x.code}: ${x.observation}. Action: ${x.action}`),\n `QUALITY: ${q.response_measure||''}. Causal uplift, AI accuracy and AI cost are unavailable without verified additional data.`\n];\nreturn [{json:{report_day:r.report_day,metrics:m,quality:q,insights:issues,report_text:lines.join('\\n'),generated_at:r.generated_at}}];"
+      },
+      "id": "37ef69e3-8821-4238-8920-e78d3eccad1f",
+      "name": "R2 · Bottlenecks & Optimization (No AI Guessing)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT public.engine1_c07_save_insights_v1($1::date,$2::jsonb) AS saved;",
+        "options": {
+          "queryReplacement": "={{ [ $json.report_day, JSON.stringify($json.insights) ] }}"
+        }
+      },
+      "id": "a6ec1679-25d3-4b04-90db-bad561d912b8",
+      "name": "R3 · Persist Insights (Daily Upsert)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1168,
+        240
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Qck2ApAtQoYZ4CnL",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT report_day::text, generated_at, metrics, insights, quality\nFROM public.engine1_c07_daily_reports\nWHERE report_day BETWEEN ($1::date - 29) AND $1::date\nORDER BY report_day DESC LIMIT 30;",
+        "options": {
+          "queryReplacement": "={{ [ $('R2 · Bottlenecks & Optimization (No AI Guessing)').first().json.report_day ] }}"
+        }
+      },
+      "id": "dda4a592-ff4a-4314-bc06-08a67a02a858",
+      "name": "R4 · Load 30-day Snapshot Trend",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1424,
+        240
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Qck2ApAtQoYZ4CnL",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const latest=$('R2 · Bottlenecks & Optimization (No AI Guessing)').first().json;\nconst persisted=$('R3 · Persist Insights (Daily Upsert)').first().json.saved||{};\nconst rows=$input.all().map(i=>i.json).filter(x=>x&&x.report_day);\nconst s=rows.map(x=>({day:x.report_day,leads:Number(x.metrics?.intake?.leads_received||0),accepted:Number(x.metrics?.acknowledgment?.provider_accepted||0),delivered:Number(x.metrics?.acknowledgment?.delivered||0),converted_cohort_as_of_snapshot:Number(x.metrics?.intake?.converted_cohort_as_of_run||0)}));\nconst last7=s.slice(0,7);\nconst t={days_available:s.length,last7_leads:last7.reduce((v,x)=>v+x.leads,0),last7_provider_accepted:last7.reduce((v,x)=>v+x.accepted,0),last7_delivered:last7.reduce((v,x)=>v+x.delivered,0)};\n// Conversion is cohort-as-of-snapshot: NEVER add across days and call it a daily conversion event count.\nconst text=latest.report_text+'\\n\\nTREND (stored reports, latest 7 days): '+t.days_available+' total days available, '+t.last7_leads+' leads, '+t.last7_provider_accepted+' provider accepted acknowledgments, '+t.last7_delivered+' confirmed delivered.\\nSnapshot saved: '+persisted.action+'.';\nreturn [{json:{action:persisted.action==='saved'?'report_ready':'persistence_needs_attention',report_day:latest.report_day,summary:text,insights:latest.insights,quality:latest.quality,metrics:latest.metrics,trend:t,daily_points:s,persisted}}];"
+      },
+      "id": "730e8776-005a-4072-994d-3228cf1747bf",
+      "name": "R5 · Final Report + Trends",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1664,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const j=$input.first().json;return [{json:{action:'blocked',readiness:j.readiness,missing_tables:j.missing_tables,enabled:j.enabled,message:'Run Canvas 07 migration; verify schema; set c07_enabled=true only after reviewing the SQL. No writes occurred.'}}];"
+      },
+      "id": "40cee57b-d7eb-465a-8904-d4d41459f05c",
+      "name": "G0 · Readiness Blocked",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        432,
+        512
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const j=$input.first().json;return [{json:{action:'not_stored',result:j.report||j,message:'Database refresh did not store a report; inspect c07_enabled/config and PostgreSQL execution.'}}];"
+      },
+      "id": "5c5150f1-c4eb-4b8c-a3a6-106530431273",
+      "name": "G1 · Refresh Guard Outcome",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        464
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT table_name, count(*)::integer AS columns_count FROM information_schema.columns\nWHERE table_schema='public' AND (table_name IN ('leads','event_log','crm_sync_legs','engine1_dispatch_outbox') OR table_name LIKE 'engine1_c0%')\nGROUP BY table_name ORDER BY table_name;",
+        "options": {}
+      },
+      "id": "1e6a4729-90eb-4de8-af87-2f0042e8a162",
+      "name": "D0 · Schema Inventory (Manual Only)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        32,
+        672
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Qck2ApAtQoYZ4CnL",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "T0 · Manual Report Trigger": {
+      "main": [
+        [
+          {
+            "node": "M0 · Today (Karachi)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "T1 · Daily 01:15 PKT (DISABLED)": {
+      "main": [
+        [
+          {
+            "node": "M1 · Yesterday (Karachi)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "M0 · Today (Karachi)": {
+      "main": [
+        [
+          {
+            "node": "R0 · Readiness & Schema Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "M1 · Yesterday (Karachi)": {
+      "main": [
+        [
+          {
+            "node": "R0 · Readiness & Schema Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "R0 · Readiness & Schema Gate": {
+      "main": [
+        [
+          {
+            "node": "A1 · Analytics Authorized?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "R1 · Refresh Daily Snapshot": {
+      "main": [
+        [
+          {
+            "node": "A2 · Snapshot Stored?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "R2 · Bottlenecks & Optimization (No AI Guessing)": {
+      "main": [
+        [
+          {
+            "node": "R3 · Persist Insights (Daily Upsert)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "R3 · Persist Insights (Daily Upsert)": {
+      "main": [
+        [
+          {
+            "node": "R4 · Load 30-day Snapshot Trend",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "R4 · Load 30-day Snapshot Trend": {
+      "main": [
+        [
+          {
+            "node": "R5 · Final Report + Trends",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "A1 · Analytics Authorized?": {
+      "main": [
+        [
+          {
+            "node": "R1 · Refresh Daily Snapshot",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "G0 · Readiness Blocked",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "A2 · Snapshot Stored?": {
+      "main": [
+        [
+          {
+            "node": "R2 · Bottlenecks & Optimization (No AI Guessing)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "G1 · Refresh Guard Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "T4oF1iLesIwWu1I7",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "7a1368e0-0c5a-4d25-bcab-760a0c37def5",
+  "meta": {
+    "instanceId": "a9ffeeb0672bc04438a2517478a96e439ea10f4d2d22d78a8f5fe1f2de5159ef"
+  },
+  "nodeGroups": [],
+  "id": "w76cWd0KZBm3wEC1",
+  "tags": []
+}
