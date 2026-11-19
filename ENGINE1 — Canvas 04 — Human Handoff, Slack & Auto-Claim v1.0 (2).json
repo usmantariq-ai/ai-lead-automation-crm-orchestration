@@ -1,0 +1,1040 @@
+{
+  "name": "ENGINE1 — Canvas 04 — Human Handoff, Slack & Auto-Claim v1.0",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "# ENGINE 1 — CANVAS 04 / HUMAN HANDOFF\nPostgreSQL is authoritative. **Import JSON → apply separate SQL migration → set credentials → test → activate.**\nSafe defaults: all C04 action switches OFF. No tokens in JSON.\nFive outcomes: Slack notice, signed Claim, verified CRM auto-claim, reply→human, SLA 10m→20m→manager.",
+        "height": 300,
+        "width": 548
+      },
+      "id": "31e52878-31c9-447f-b54c-8d9d2a83bf58",
+      "name": "ABOUT · Canvas 04",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -160,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "content": "# S — SLA / RECOVERY\nOriginal rep: 10 minutes. Reassign once to another active non-manager. Second rep: 20 minutes, then manager escalation. Neither reply nor notification marks rep acknowledgment.\nOne schedule tick is safe under concurrent workers.",
+        "height": 220,
+        "width": 470
+      },
+      "id": "e441d3d3-2099-4d5d-89e0-2bc419ff150e",
+      "name": "LANE S · Claim and escalation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1584,
+        1424
+      ]
+    },
+    {
+      "parameters": {
+        "content": "# K — SLACK INTERACTIVITY\nWebhook requires the ORIGINAL raw form body. Verify Slack `v0` HMAC-SHA256 and ±5-minute timestamp **before SQL**.\nUse the n8n **Crypto HMAC Secret credential** in K4; no env variables or plaintext secrets in JSON.\nSlack app Interactivity Request URL: public n8n production webhook.",
+        "height": 233,
+        "width": 470
+      },
+      "id": "55159234-fac4-4a8c-9e51-7f68c3aa8e9c",
+      "name": "LANE K · Signed Slack actions",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2064,
+        1408
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "90679d02-4da1-48aa-8da0-3df4d2aa02e7",
+      "name": "T1 · Every Minute / Slack Outbox",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        464,
+        304
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "1cf15d8b-a92f-4271-b632-16739ac6679e",
+      "name": "T0H · Manual Slack Outbox Test",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        448,
+        496
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT public.engine1_c04_claim_notification_v1() AS handoff_job;",
+        "options": {}
+      },
+      "id": "88dc1b1e-8c51-4e38-8dcf-da6fc2660094",
+      "name": "H1 · Claim Canvas 04 Notification",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        736,
+        432
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Qck2ApAtQoYZ4CnL",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "b7ad184f-d062-4137-87b7-0c16efa19cfd",
+              "leftValue": "={{ String($json.handoff_job?.action) }}",
+              "rightValue": "notify",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "3f3768ac-2240-43f0-8a95-6542e8db4832",
+      "name": "H2 · Due Authorized Notice?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1024,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst job = $input.first().json.handoff_job;\n\nconst esc = s =>\n  String(s ?? '')\n    .replace(/&/g, '&amp;')\n    .replace(/</g, '&lt;')\n    .replace(/>/g, '&gt;')\n    .slice(0, 140);\n\nconst lead = esc(job.lead_id);\n\nconst rep =\n  job.slack_user_id &&\n  /^[UW][A-Z0-9]{6,}$/.test(String(job.slack_user_id))\n    ? `<@${job.slack_user_id}>`\n    : esc(job.rep_name || 'Assigned representative');\n\n// Notification titles\nconst labels = {\n  handoff: 'New lead assigned',\n  reassignment: 'Lead reassigned — action required',\n  priority: 'Priority lead needs attention',\n  customer_reply: 'Customer replied — human follow-up needed',\n  escalation: 'SLA missed — manager intervention',\n};\n\nconst headline = labels[job.kind] || 'Human handoff';\n\n// Lead information\nconst details = [\n  `*Lead:* ${lead}`,\n  `*Customer:* ${esc(job.first_name)}`,\n  `*Source:* ${esc(job.source)}`,\n  `*Priority:* ${esc(job.priority)} (score ${\n    job.score == null ? 'pending' : Number(job.score)\n  })`,\n  `*Engagement:* ${esc(job.engagement || 'none')}`,\n  job.qualification_summary\n    ? `*Qualification:* ${esc(job.qualification_summary)}`\n    : '*Qualification:* Pending',\n  `*Owner:* ${rep}`,\n  `*Stage:* ${esc(job.lead_state)}`,\n  job.due_at\n    ? `*Claim deadline:* ${esc(job.due_at)}`\n    : '*Claim deadline:* Manager escalation',\n].join('\\n');\n\n// Slack message blocks\nconst blocks = [\n  {\n    type: 'header',\n    text: {\n      type: 'plain_text',\n      text: headline.slice(0, 150),\n    },\n  },\n  {\n    type: 'section',\n    text: {\n      type: 'mrkdwn',\n      text: details.slice(0, 2800),\n    },\n  },\n  {\n    type: 'context',\n    elements: [\n      {\n        type: 'mrkdwn',\n        text:\n          'A customer reply does NOT claim a lead. ' +\n          'Only the currently authorized representative ' +\n          'can claim an assigned lead. ' +\n          'Manager escalations require manual intervention.',\n      },\n    ],\n  },\n];\n\n// Show Claim Lead only for eligible handoff/priority/reassignment cards.\n// Customer replies and manager escalations never show this button.\nif (\n  job.can_claim &&\n  !['customer_reply', 'escalation'].includes(job.kind)\n) {\n  blocks.push({\n    type: 'actions',\n    elements: [\n      {\n        type: 'button',\n        action_id: 'engine1_c04_claim',\n        text: {\n          type: 'plain_text',\n          text: 'Claim Lead',\n        },\n        style: 'primary',\n        value: `${job.lead_id}|${job.assignment_version}`,\n      },\n    ],\n  });\n}\n\n// Return Slack request and notification metadata\nreturn [\n  {\n    json: {\n      notification_id: job.notification_id,\n      claim_token: job.claim_token,\n      slack_request: {\n        channel: String(job.channel),\n        text: `${headline}: ${job.lead_id}`,\n        blocks,\n        unfurl_links: false,\n        unfurl_media: false,\n      },\n    },\n  },\n];\n"
+      },
+      "id": "f8ff2922-3f6a-4b5e-8da7-cc2ea2a2df2f",
+      "name": "H3 · Compose Assigned-Rep Slack Card",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.postMessage",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json; charset=utf-8"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.slack_request }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "f49e0a6a-4896-4451-aef2-3f30643a58d0",
+      "name": "H4 · Slack / Post Handoff Card",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1552,
+        368
+      ],
+      "credentials": {
+        "slackApi": {
+          "id": "8ZiRgBNsWRuYv7v1",
+          "name": "Slack account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const j = $('H3 · Compose Assigned-Rep Slack Card').first().json;\nconst r = $input.first()?.json ?? {};\nlet body=r.body ?? {}; if(typeof body==='string'){try{body=JSON.parse(body)}catch{body={}}}\nconst http = Number(r.statusCode ?? 0) || null;\nconst ok = http===200 && body?.ok===true && typeof body.ts==='string' && typeof body.channel==='string';\nlet outcome='unknown';\nif(ok) outcome='posted';\nelse if(http===429) outcome='retryable';\nelse if(http && http>=400 && http<500) outcome='failed';\nelse if(http===200 && body?.ok===false) outcome='failed';\n// Network errors, timeouts and 5xx are ambiguous: never retry blindly.\nconst err=String(body?.error ?? r.error?.message ?? (http?`http_${http}`:'transport_unknown')).slice(0,140);\nreturn [{json:{notification_id:j.notification_id,claim_token:j.claim_token,\n result:outcome,http_status:http,channel_id:ok?body.channel:null,\n slack_ts:ok?body.ts:null,error_code:ok?null:err}}];"
+      },
+      "id": "a06d53c5-93ab-4f6d-a6d6-73f27aa1fb7a",
+      "name": "H5 · Classify Slack Provider Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1824,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT public.engine1_c04_finish_notification_v1($1::uuid,$2::uuid,$3::text,$4::integer,$5::text,$6::text,$7::text) AS slack_result;",
+        "options": {
+          "queryReplacement": "={{ [ $json.notification_id, $json.claim_token, $json.result, $json.http_status, $json.channel_id, $json.slack_ts, $json.error_code ] }}"
+        }
+      },
+      "id": "8cdbfe69-038d-4435-b897-d2a229ebf06e",
+      "name": "H6 · Persist Slack Result / No Blind Retry",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2112,
+        368
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Qck2ApAtQoYZ4CnL",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "2b90379b-57a3-44d7-a400-411dbffe046d",
+      "name": "T2 · Every Minute / SLA Tick",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        64,
+        720
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT public.engine1_c04_sla_tick_v1(25) AS sla_result;",
+        "options": {}
+      },
+      "id": "b562d742-5762-4f69-80c1-451882cff056",
+      "name": "S1 · Reassign Once / Escalate Manager",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        352,
+        768
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Qck2ApAtQoYZ4CnL",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes"
+            }
+          ]
+        }
+      },
+      "id": "b04ff112-2e38-44fb-8581-e611765fec4c",
+      "name": "T3 · Every 5 Minutes / Lease Recovery",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        768,
+        720
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT public.engine1_c04_recover_v1(30) AS recovery_result;",
+        "options": {}
+      },
+      "id": "a2f5e83f-492a-42fa-94e8-03b710c43c7b",
+      "name": "R1 · Expired Slack Send → Unknown / Canvas 06",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1088,
+        752
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Qck2ApAtQoYZ4CnL",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "engine1-c04-slack-actions",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "9402c627-68ea-4ed5-97a4-aa99745bee0f",
+      "name": "K1 · Slack Interactive Action (Raw Body)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        64,
+        1040
+      ],
+      "webhookId": "43043ec8-a5a4-4dd2-8ba4-86b709284f19"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Raw form bytes MUST be preserved. Reject if n8n parsed/changed the body.\nconst req=$input.first(),j=req.json||{};\nconst h=Object.fromEntries(Object.entries(j.headers||{}).map(([k,v])=>[k.toLowerCase(),String(v)]));\nlet raw=null;\nif(typeof j.body==='string') raw=j.body;\nelse if(typeof j.rawBody==='string') raw=j.rawBody;\nelse if(j.body?.type==='Buffer'&&Array.isArray(j.body.data)) raw=Buffer.from(j.body.data).toString('utf8');\nelse if(req.binary?.data?.data) raw=Buffer.from(req.binary.data.data,'base64').toString('utf8');\nconst timestamp=String(h['x-slack-request-timestamp']||'');\nconst signature=String(h['x-slack-signature']||'');\nconst pre_valid=typeof raw==='string'&&raw.length>0&&raw.length<=20000&&\n /^\\d{10,11}$/.test(timestamp)&&/^v0=[0-9a-f]{64}$/.test(signature)&&\n Math.abs(Math.floor(Date.now()/1000)-Number(timestamp))<=300;\nreturn [{json:{pre_valid,raw:pre_valid?raw:'',timestamp,signature,\n base_string:pre_valid?`v0:${timestamp}:${raw}`:''}}];"
+      },
+      "id": "ff8a3bc7-a26c-417a-862d-479eb089d48e",
+      "name": "K2 · Extract Exact Raw Slack Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        352,
+        1040
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "62fc2e92-b093-404a-a6db-fa2ed33c2e93",
+              "leftValue": "={{ String($json.pre_valid) }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "6e383cc4-7f2d-42ad-b8bd-e08c771a2107",
+      "name": "K3 · Fresh Raw Signed Request?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        640,
+        1040
+      ]
+    },
+    {
+      "parameters": {
+        "action": "hmac",
+        "value": "={{ $json.base_string }}",
+        "dataPropertyName": "hmac_hex"
+      },
+      "id": "61c84191-07b3-4f80-b54f-bd14da190d81",
+      "name": "K4 · Crypto / Slack HMAC SHA256",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 2,
+      "position": [
+        896,
+        976
+      ],
+      "credentials": {
+        "crypto": {
+          "id": "KJXH6IYjShceo3u2",
+          "name": "Engine1 — Slack Signing crypto"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst j = $input.first().json;\n\nlet out = {\n  valid: false,\n  reason: 'signature_or_payload_invalid'\n};\n\ntry {\n  // 1. Verify Slack HMAC signature\n  const actual = 'v0=' + String(j.hmac_hex || '');\n  const expected = String(j.signature || '');\n\n  if (actual.length !== 67 || expected.length !== 67) {\n    throw Error('invalid_signature_length');\n  }\n\n  let diff = 0;\n\n  for (let i = 0; i < 67; i++) {\n    diff |= actual.charCodeAt(i) ^ expected.charCodeAt(i);\n  }\n\n  if (diff !== 0) {\n    throw Error('invalid_signature');\n  }\n\n  // 2. Decode Slack form payload without URLSearchParams\n  const decodeFormComponent = value =>\n    decodeURIComponent(value.replace(/\\+/g, ' '));\n\n  let encoded;\n\n  for (const field of j.raw.split('&')) {\n    const separator = field.indexOf('=');\n\n    const key = separator === -1\n      ? field\n      : field.slice(0, separator);\n\n    if (decodeFormComponent(key) !== 'payload') {\n      continue;\n    }\n\n    if (encoded !== undefined) {\n      throw Error('duplicate_payload');\n    }\n\n    encoded = decodeFormComponent(\n      separator === -1\n        ? ''\n        : field.slice(separator + 1)\n    );\n  }\n\n  if (!encoded) {\n    throw Error('missing_payload');\n  }\n\n  // 3. Parse Slack interaction payload\n  const p = JSON.parse(encoded);\n  const a = p.actions?.[0];\n\n  if (a?.action_id !== 'engine1_c04_claim') {\n    throw Error('wrong_action');\n  }\n\n  // 4. Extract lead ID and assignment version\n  const [lead, version] = String(a.value || '').split('|');\n\n  if (\n    !/^[0-9a-f]{8}-[0-9a-f-]{27,}$/.test(lead) ||\n    !/^[1-9]\\d{0,7}$/.test(version || '')\n  ) {\n    throw Error('bad_lead_or_version');\n  }\n\n  // 5. Validate Slack actor information\n  if (\n    !/^[A-Z0-9]{5,25}$/.test(String(p.user?.id || '')) ||\n    !p.team?.id ||\n    !p.container?.channel_id\n  ) {\n    throw Error('bad_actor');\n  }\n\n  // 6. Generate unique claim action key\n  const action_key =\n    `${p.team.id}:${p.user.id}:${a.action_ts || j.timestamp}:${lead}`\n      .slice(0, 240);\n\n  // 7. Return validated claim\n  out = {\n    valid: true,\n    lead_id: lead,\n    assignment_version: Number(version),\n    slack_user_id: p.user.id,\n    action_key\n  };\n\n} catch (e) {\n  out = {\n    valid: false,\n    reason: String(e.message || 'invalid').slice(0, 60)\n  };\n}\n\nreturn [{ json: out }];\n"
+      },
+      "id": "fdbd1e16-7bee-4c04-b3f7-37e03701f958",
+      "name": "K5 · Constant-Time Compare / Extract Claim",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1168,
+        976
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "ced259ca-02e7-4cee-8bc6-5dc03eaf3a36",
+              "leftValue": "={{ String($json.valid) }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "1af4cfe8-094c-4d53-a19d-8ec5dc97568c",
+      "name": "K6 · Valid Slack Claim?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1456,
+        976
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT public.engine1_c04_slack_claim_v1($1::uuid,$2::integer,$3::text,$4::text) AS claim_result;",
+        "options": {
+          "queryReplacement": "={{ [ $json.lead_id, $json.assignment_version, $json.slack_user_id, $json.action_key ] }}"
+        }
+      },
+      "id": "f00e7fd0-2795-44a5-adc1-4eb3065537b0",
+      "name": "K7 · Atomic Claim / Pause Nurture / Sync Owners",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1696,
+        912
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Qck2ApAtQoYZ4CnL",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "1e84594f-5892-417c-9ed8-c55dfc471a03",
+      "name": "K8 · Slack Ephemeral Claim Feedback",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1984,
+        912
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ ({error:'invalid_slack_signature_or_payload'}) }}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "284709ed-f8f5-4354-bd8c-3e549bd83f7f",
+      "name": "K9 · Reject Invalid Slack Request",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1696,
+        1184
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "engine1-c04-verified-events",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "eb6634fa-e59e-46b0-b7d9-c2dc01a7840d",
+      "name": "V1 · Authenticated Verified CRM Event Relay",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        48,
+        1376
+      ],
+      "webhookId": "447ef328-cf05-4c31-ba30-9e0325b342f0",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "zwA6W1b7QHY2hWRH",
+          "name": "Webhook API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const incoming=$input.first().json.body;\nconst allowed=['provider','event_id','lead_id','external_contact_id','kind','owner_id','activity_type',\n  'direction','actor_type','occurred_at'];\nconst valid=incoming && typeof incoming==='object' && !Array.isArray(incoming) &&\n JSON.stringify(incoming).length<=8192 && allowed.slice(0,5).every(k=>typeof incoming[k]==='string');\nconst evt={}; if(valid) for(const k of allowed) if(typeof incoming[k]==='string') evt[k]=incoming[k].slice(0,300);\nreturn [{json:{valid:Boolean(valid),verified_event:evt}}];"
+      },
+      "id": "7fc0fd29-4d9d-46f7-ad7f-b2ae0e162c24",
+      "name": "V2 · Normalize Only Approved Event Fields",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        352,
+        1376
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "54f2c309-fcc1-434b-a84c-3832b640f02d",
+              "leftValue": "={{ String($json.valid) }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "55ca551c-036e-4e89-8166-217a71c36d38",
+      "name": "V3 · Valid Canonical Shape?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        640,
+        1376
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT public.engine1_c04_verified_event_v1($1::jsonb) AS event_result;",
+        "options": {
+          "queryReplacement": "={{ [ JSON.stringify($json.verified_event) ] }}"
+        }
+      },
+      "id": "cf63ab5a-f51f-413f-8b96-2da43442f23e",
+      "name": "V4 · Verify Mapping / Claim / Record Reply",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        896,
+        1312
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Qck2ApAtQoYZ4CnL",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ ({ok:true,decision:$json.event_result?.action||'unknown'}) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "cd92da0f-2f61-4aae-994a-75e60d6a300b",
+      "name": "V5 · Return Verified Event Decision",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1200,
+        1312
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ ({ok:false,error:'invalid_canonical_event'}) }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "648345d8-7f83-4dde-815d-d1158648e2b1",
+      "name": "V6 · Reject Bad Relay Payload",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        896,
+        1520
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.postEphemeral",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "=\n{{ JSON.stringify({\n  channel: 'C0CF8SFRRFE',\n  user: $('K5 · Constant-Time Compare / Extract Claim').first().json.slack_user_id,\n  text:\n    $json.claim_result?.action === 'claimed'\n      ? '✅ Lead claimed successfully. Automated nurture stopped; CRM owner updates queued.'\n      : $json.claim_result?.action === 'already_claimed'\n        ? 'ℹ️ This lead has already been claimed.'\n        : '⚠️ Claim not applied: ' + ($json.claim_result?.action || 'unknown')\n}) }}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2208,
+        896
+      ],
+      "id": "5e0f2422-ee5f-4ec6-b2d8-a212a3ee2f29",
+      "name": "K10 — Slack Claim Confirmation",
+      "credentials": {
+        "slackApi": {
+          "id": "8ZiRgBNsWRuYv7v1",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\n/*\n Engine 1 — Canvas 04\n Build safe Slack message update after atomic claim.\n\n K1–K7 are unchanged.\n Uses previously verified Slack payload from K2.\n Does not perform database writes or Slack API calls.\n*/\n\nconst claim = $('K7 · Atomic Claim / Pause Nurture / Sync Owners')\n  .first().json.claim_result || {};\n\nconst verified = $('K5 · Constant-Time Compare / Extract Claim')\n  .first().json;\n\nconst raw = $('K2 · Extract Exact Raw Slack Request')\n  .first().json.raw;\n\nconst skip = reason => [\n  { json: { update_ready: false, reason } }\n];\n\ntry {\n  // Only process confirmed claimed states.\n  if (!['claimed', 'already_claimed'].includes(claim.action)) {\n    return skip('claim_not_confirmed');\n  }\n\n  if (verified.valid !== true || typeof raw !== 'string') {\n    return skip('unverified_request');\n  }\n\n  // Decode the authenticated Slack interaction payload.\n  let encoded;\n\n  for (const field of raw.split('&')) {\n    const separator = field.indexOf('=');\n\n    const key = decodeURIComponent(\n      (separator < 0 ? field : field.slice(0, separator))\n        .replace(/\\+/g, ' ')\n    );\n\n    if (key !== 'payload') continue;\n\n    if (encoded !== undefined) {\n      return skip('duplicate_payload');\n    }\n\n    encoded = decodeURIComponent(\n      (separator < 0 ? '' : field.slice(separator + 1))\n        .replace(/\\+/g, ' ')\n    );\n  }\n\n  if (!encoded) return skip('missing_payload');\n\n  const p = JSON.parse(encoded);\n  const action = p.actions?.[0];\n\n  // Confirm the card belongs to the verified claim.\n  if (\n    p.type !== 'block_actions' ||\n    action?.action_id !== 'engine1_c04_claim' ||\n    action?.value !==\n      `${verified.lead_id}|${verified.assignment_version}` ||\n    p.user?.id !== verified.slack_user_id\n  ) {\n    return skip('interaction_mismatch');\n  }\n\n  const channel = String(p.container?.channel_id || '');\n  const ts = String(p.message?.ts || '');\n\n  if (\n    !/^[CGD][A-Z0-9]+$/.test(channel) ||\n    !/^\\d{10,}\\.\\d{6}$/.test(ts) ||\n    p.channel?.id !== channel ||\n    p.container?.message_ts !== ts ||\n    !p.message?.bot_id ||\n    !Array.isArray(p.message?.blocks)\n  ) {\n    return skip('invalid_original_message');\n  }\n\n  const repId = String(\n    claim.rep_id || claim.assigned_rep_id || ''\n  );\n\n  if (!repId) return skip('missing_claimed_rep');\n\n  // Preserve original card content.\n  const blocks = JSON.parse(\n    JSON.stringify(p.message.blocks)\n  );\n\n  // Remove the specific Claim Lead button.\n  const updatedBlocks = [];\n  let removedClaimButton = false;\n\n  for (const block of blocks) {\n    if (block.type === 'actions') {\n      const elements = (block.elements || []).filter(element => {\n        if (\n          element.type === 'button' &&\n          element.action_id === 'engine1_c04_claim'\n        ) {\n          removedClaimButton = true;\n          return false;\n        }\n\n        return true;\n      });\n\n      if (elements.length) {\n        block.elements = elements;\n        updatedBlocks.push(block);\n      }\n\n      continue;\n    }\n\n    if (block.type === 'header') {\n      block.text = {\n        type: 'plain_text',\n        text: 'Lead claimed',\n        emoji: true\n      };\n    }\n\n    if (block.type === 'section' &&\n        block.text?.type === 'mrkdwn') {\n      block.text.text = block.text.text\n        .replace(\n          /^\\*Stage:\\*.*$/m,\n          '*Stage:* CLAIMED'\n        )\n        .replace(\n          /^\\*Claim deadline:\\*.*(?:\\n|$)/m,\n          ''\n        )\n        .trim();\n    }\n\n    // Remove the previous instructions to click Claim.\n    if (\n      block.type === 'context' &&\n      (block.elements || []).some(e =>\n        String(e.text || '').includes(\n          'Claim only as the assigned rep'\n        )\n      )\n    ) {\n      continue;\n    }\n\n    updatedBlocks.push(block);\n  }\n\n  if (!removedClaimButton) {\n    return skip('claim_button_not_found');\n  }\n\n  updatedBlocks.push({\n    type: 'context',\n    elements: [{\n      type: 'mrkdwn',\n      text: `✅ Claimed by representative \\`${repId}\\`.`\n    }]\n  });\n\n  return [{\n    json: {\n      update_ready: true,\n      channel,\n      ts,\n      lead_id: verified.lead_id,\n      claim_action: claim.action,\n      text: `Lead claimed: ${verified.lead_id}`,\n      blocks: updatedBlocks\n    }\n  }];\n\n} catch (error) {\n  return skip('card_build_failed');\n}\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2416,
+        896
+      ],
+      "id": "4e1dde2e-6542-4d79-88b7-8dbcbb130d46",
+      "name": "K11 · Build Claimed Card Update"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "c04-card-ready-condition",
+              "leftValue": "={{ String($json.update_ready) }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "8d3edd3c-60ea-4292-b914-862a47d7a204",
+      "name": "K12 · Card Update Ready?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2656,
+        848
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.update",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $json.channel, ts: $json.ts, text: $json.text, blocks: $json.blocks }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "d3ed40af-d19d-4d87-9d63-da28ec255e53",
+      "name": "K13 · Slack Update Original Card",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2880,
+        832
+      ],
+      "credentials": {
+        "slackApi": {
+          "id": "8ZiRgBNsWRuYv7v1",
+          "name": "Slack account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "T1 · Every Minute / Slack Outbox": {
+      "main": [
+        [
+          {
+            "node": "H1 · Claim Canvas 04 Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "T0H · Manual Slack Outbox Test": {
+      "main": [
+        [
+          {
+            "node": "H1 · Claim Canvas 04 Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "H1 · Claim Canvas 04 Notification": {
+      "main": [
+        [
+          {
+            "node": "H2 · Due Authorized Notice?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "H2 · Due Authorized Notice?": {
+      "main": [
+        [
+          {
+            "node": "H3 · Compose Assigned-Rep Slack Card",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "H3 · Compose Assigned-Rep Slack Card": {
+      "main": [
+        [
+          {
+            "node": "H4 · Slack / Post Handoff Card",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "H4 · Slack / Post Handoff Card": {
+      "main": [
+        [
+          {
+            "node": "H5 · Classify Slack Provider Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "H5 · Classify Slack Provider Response": {
+      "main": [
+        [
+          {
+            "node": "H6 · Persist Slack Result / No Blind Retry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "T2 · Every Minute / SLA Tick": {
+      "main": [
+        [
+          {
+            "node": "S1 · Reassign Once / Escalate Manager",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "T3 · Every 5 Minutes / Lease Recovery": {
+      "main": [
+        [
+          {
+            "node": "R1 · Expired Slack Send → Unknown / Canvas 06",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "K1 · Slack Interactive Action (Raw Body)": {
+      "main": [
+        [
+          {
+            "node": "K2 · Extract Exact Raw Slack Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "K2 · Extract Exact Raw Slack Request": {
+      "main": [
+        [
+          {
+            "node": "K3 · Fresh Raw Signed Request?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "K3 · Fresh Raw Signed Request?": {
+      "main": [
+        [
+          {
+            "node": "K4 · Crypto / Slack HMAC SHA256",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "K9 · Reject Invalid Slack Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "K4 · Crypto / Slack HMAC SHA256": {
+      "main": [
+        [
+          {
+            "node": "K5 · Constant-Time Compare / Extract Claim",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "K5 · Constant-Time Compare / Extract Claim": {
+      "main": [
+        [
+          {
+            "node": "K6 · Valid Slack Claim?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "K6 · Valid Slack Claim?": {
+      "main": [
+        [
+          {
+            "node": "K7 · Atomic Claim / Pause Nurture / Sync Owners",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "K9 · Reject Invalid Slack Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "K7 · Atomic Claim / Pause Nurture / Sync Owners": {
+      "main": [
+        [
+          {
+            "node": "K8 · Slack Ephemeral Claim Feedback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "V1 · Authenticated Verified CRM Event Relay": {
+      "main": [
+        [
+          {
+            "node": "V2 · Normalize Only Approved Event Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "V2 · Normalize Only Approved Event Fields": {
+      "main": [
+        [
+          {
+            "node": "V3 · Valid Canonical Shape?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "V3 · Valid Canonical Shape?": {
+      "main": [
+        [
+          {
+            "node": "V4 · Verify Mapping / Claim / Record Reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "V6 · Reject Bad Relay Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "V4 · Verify Mapping / Claim / Record Reply": {
+      "main": [
+        [
+          {
+            "node": "V5 · Return Verified Event Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "K8 · Slack Ephemeral Claim Feedback": {
+      "main": [
+        [
+          {
+            "node": "K10 — Slack Claim Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "K10 — Slack Claim Confirmation": {
+      "main": [
+        [
+          {
+            "node": "K11 · Build Claimed Card Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "K11 · Build Claimed Card Update": {
+      "main": [
+        [
+          {
+            "node": "K12 · Card Update Ready?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "K12 · Card Update Ready?": {
+      "main": [
+        [
+          {
+            "node": "K13 · Slack Update Original Card",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "T4oF1iLesIwWu1I7",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "e745f0ad-5937-4c55-810b-11c97ca7716d",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "a9ffeeb0672bc04438a2517478a96e439ea10f4d2d22d78a8f5fe1f2de5159ef"
+  },
+  "nodeGroups": [],
+  "id": "fEPL98aC74mcBfbu",
+  "tags": []
+}

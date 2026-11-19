@@ -1,0 +1,608 @@
+{
+  "name": "ENGINE1 | Canvas 02 | Smart Acknowledgment & Messaging | v1.0",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## CANVAS 02 · SMART ACKNOWLEDGMENT · v1.0\n**Input:** Canvas 01 durable outbox (`destination=canvas_02`).\n**Output:** consented email acknowledged through Resend; provider ID, delivery status, and audit records stored in PostgreSQL.\n\n**No direct Canvas 01 webhook dependency.** A 1-minute worker claims one due job; an independent 15-minute worker checks delivery by provider ID. A manual trigger makes setup testing possible before publication.\n\n**Safety:** global kill switch + explicit email consent + contact opt-out + exact recipient allowlist + daily cap + quiet hours. Distinct repeat inquiries are eligible; event-key replays produce no new jobs.",
+        "height": 370,
+        "width": 650,
+        "color": 6
+      },
+      "id": "f29bbd55-606a-4965-8279-fcd6d432d8ff",
+      "name": "README · Canvas 02 / behavior",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        640,
+        16
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## REQUIRED BEFORE SENDING\n1. Backup database; apply `ENGINE1_Canvas02_Required_Migration_v1.0.sql` as one transaction.\n2. Assign PostgreSQL credential to all B/P database nodes.\n3. Assign existing **Resend Header Auth credential** to both HTTP nodes; it must send `Authorization: Bearer ...`. **Never insert tokens into workflow JSON.**\n4. Add only your owned/approved email address to `c02_demo_email_allowlist` in PostgreSQL.\n5. Keep `messaging_kill_switch=true` until controlled tests. An eligible lead needs `email_consent:true` from Canvas 01. Test sender `onboarding@resend.dev` generally supports account-owned recipient only.\n6. Pingram remains deferred because its API currently returns 403; SMS does **not** send.",
+        "height": 354,
+        "width": 544,
+        "color": 6
+      },
+      "id": "af16c36f-5bf0-417f-b156-8321ae03924c",
+      "name": "README · Prerequisites, setup",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2640,
+        704
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## POLICY / RECOVERY\nLocal time: **Asia/Karachi 21:00–09:00** (read from `system_state`).\n`c02_email_quiet_mode=after_hours` sends permitted email immediately with after-hours copy; `defer` holds to next 09:00. SMS never sends until Pingram API is repaired.\n\nRetries: 429/5xx (or Resend concurrent idempotency conflict) with the SAME frozen payload and idempotency key, max 3 sends and <=20h from first attempt. Network timeout / expired in-flight lease = **unknown; manual reconciliation**, not blind resend. An incident is queued for Canvas 06. Failed delivery is also queued for Canvas 06 (no unsafe automatic second send).",
+        "height": 209,
+        "width": 1038,
+        "color": 6
+      },
+      "id": "ff455edf-fb8d-4b9e-ade3-ff7ce9f0d787",
+      "name": "README · Quiet hours and durable retries",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1328,
+        -112
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## TEST GATES (BEFORE PUBLISHING)\n1. Kill switch ON: manual run -> `paused_kill_switch`; no send.\n2. Consent false: distinct lead -> `skipped_no_consent`; no provider request.\n3. Recipient not allowlisted: `deferred_allowlist`; no send.\n4. Approved owned recipient + email consent: POST once; `accepted` with provider ID.\n5. Manual run again: no duplicate send.\n6. Genuine repeat: new lead ID, same contact, independent allowed acknowledgment.\n7. Quiet mode `defer`: waits until local 09:00 (test via DB fixtures, not arbitrary wall-clock changes).\n8. Simulate provider 429/5xx, 401/403, delivery failed, and uncertain timeout on disposable test fixtures. Do not turn on Pingram.",
+        "height": 274,
+        "width": 864,
+        "color": 6
+      },
+      "id": "f2387556-2869-4ddb-81a6-a8c09cb12e18",
+      "name": "README · Test matrix",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1344,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "5c92fd26-5db3-4251-b034-d560f50c524a",
+      "name": "T1 · Every Minute / Due Acknowledgments",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        896,
+        496
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "d142bb7f-fdab-4ad1-abaf-0c04f0c55a5a",
+      "name": "T0 · Manual Test Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        896,
+        672
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT public.engine1_c02_claim_v1() AS ack_job;",
+        "options": {}
+      },
+      "id": "e56ce2c1-c6be-4536-bac1-b2706223b192",
+      "name": "B1 · Claim One Canvas 02 Outbox Job",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1168,
+        512
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Qck2ApAtQoYZ4CnL",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "b4c96a39-93b1-51a0-8bb1-69e347bdd540",
+              "leftValue": "={{ $json.ack_job.action }}",
+              "rightValue": "claimed",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "1991b243-c048-4bef-99eb-ec5008f1057b",
+      "name": "B2 · Job Claimed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1456,
+        512
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT public.engine1_c02_begin_send_v1($1::uuid,$2::uuid) AS send_gate;",
+        "options": {
+          "queryReplacement": "={{ [ $json.ack_job.message_id, $json.ack_job.claim_token ] }}"
+        }
+      },
+      "id": "7a59ad72-4526-4922-897e-8c982565757c",
+      "name": "B3 · Final Consent and Send Barrier",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1744,
+        416
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Qck2ApAtQoYZ4CnL",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "102ef171-00da-55d4-9e96-07be9983a0fd",
+              "leftValue": "={{ $json.send_gate.action }}",
+              "rightValue": "send",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "becfb360-724e-4d40-bc49-bc89e124052b",
+      "name": "B4 · Provider Send Authorized?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2032,
+        416
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ $json.send_gate.send_key }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.send_gate.request_payload }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "7af26222-b4a0-4bf7-a27d-d20fcb9a5502",
+      "name": "B5 · Resend / Send Acknowledgment Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2320,
+        320
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "VYS0os4ypZ4DBCOZ",
+          "name": "Resend"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const gate = $('B3 · Final Consent and Send Barrier').first().json.send_gate;\nconst response = $input.first()?.json ?? {};\nlet body = response.body;\nif (typeof body === 'string') { try { body = JSON.parse(body); } catch { body = {}; } }\nif (!body || typeof body !== 'object') body = {};\nconst status = Number(response.statusCode ?? response.status ?? 0) || 0;\nconst providerId = typeof body.id === 'string' && body.id.length > 0 ? body.id : null;\nconst rawCode = body.name ?? body.error?.name ?? body.error?.code ?? response.error?.name ?? '';\nconst errorCode = (String(rawCode || (status ? `http_${status}` : 'transport_outcome_unknown'))).slice(0,120);\nlet result = 'unknown';\nif (status >= 200 && status < 300 && providerId) result = 'accepted';\nelse if (status === 429 || status >= 500 || (status === 409 && errorCode === 'concurrent_idempotent_requests')) result = 'retryable';\nelse if (status === 401 || status === 403) result = 'auth_blocked';\nelse if (status >= 400 && status < 500) result = 'permanent';\nreturn [{json:{message_id:gate.message_id, claim_token:gate.claim_token,\n  result, http_status:status || null, provider_id:providerId, error_code:errorCode}}];"
+      },
+      "id": "a58464be-345b-4c27-a39e-624a894afda5",
+      "name": "B6 · Classify Resend Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2608,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT public.engine1_c02_finish_send_v1($1::uuid,$2::uuid,$3::text,$4::integer,$5::text,$6::text) AS send_result;",
+        "options": {
+          "queryReplacement": "={{ [ $json.message_id, $json.claim_token, $json.result, $json.http_status, $json.provider_id, $json.error_code ] }}"
+        }
+      },
+      "id": "afda0018-a649-4e53-af88-1c21be9ed788",
+      "name": "B7 · Persist Send Result and Recovery",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2896,
+        320
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Qck2ApAtQoYZ4CnL",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "f84ef6fd-ddaa-4928-941f-217b1158f9c4",
+      "name": "T2 · Every 15 Minutes / Delivery Checks",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        896,
+        976
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT public.engine1_c02_claim_delivery_v1() AS delivery_job;",
+        "options": {}
+      },
+      "id": "cc6bf3c5-0633-4f42-a9f7-1d90055cbf81",
+      "name": "P1 · Claim One Due Delivery Check",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1168,
+        976
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Qck2ApAtQoYZ4CnL",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "d49753c0-60b7-58af-946a-2d7724445182",
+              "leftValue": "={{ $json.delivery_job.action }}",
+              "rightValue": "poll",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f7b257c3-6176-4531-84aa-dfc446e6eca7",
+      "name": "P2 · Delivery Poll Due?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1456,
+        976
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://api.resend.com/emails/' + $json.delivery_job.provider_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "c83202d0-c16e-4718-ac00-88ec81b362e3",
+      "name": "P3 · Resend / Retrieve Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1744,
+        880
+      ],
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "0wyCFSQc7CTjZLcw",
+          "name": "Resend full access"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const claim = $('P1 · Claim One Due Delivery Check').first().json.delivery_job;\nconst response = $input.first()?.json ?? {};\nlet body = response.body;\nif (typeof body === 'string') { try { body = JSON.parse(body); } catch { body = {}; } }\nif (!body || typeof body !== 'object') body = {};\nconst status = Number(response.statusCode ?? response.status ?? 0) || 0;\nconst event = typeof body.last_event === 'string' ? body.last_event.toLowerCase().slice(0,64) : null;\nreturn [{json:{message_id:claim.message_id, track_token:claim.track_token,\n  http_status:status || null, provider_event:status >= 200 && status < 300 ? event : null}}];"
+      },
+      "id": "7a9f6e31-cefe-4680-a38f-5156fe4a82f2",
+      "name": "P4 · Classify Provider Delivery Status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2032,
+        880
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT public.engine1_c02_finish_delivery_v1($1::uuid,$2::uuid,$3::integer,$4::text) AS delivery_result;",
+        "options": {
+          "queryReplacement": "={{ [ $json.message_id, $json.track_token, $json.http_status, $json.provider_event ] }}"
+        }
+      },
+      "id": "430e7641-9d92-433b-b9ed-44e47dad15b5",
+      "name": "P5 · Persist Delivery Status",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2320,
+        880
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Qck2ApAtQoYZ4CnL",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "T1 · Every Minute / Due Acknowledgments": {
+      "main": [
+        [
+          {
+            "node": "B1 · Claim One Canvas 02 Outbox Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "T0 · Manual Test Trigger": {
+      "main": [
+        [
+          {
+            "node": "B1 · Claim One Canvas 02 Outbox Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "B1 · Claim One Canvas 02 Outbox Job": {
+      "main": [
+        [
+          {
+            "node": "B2 · Job Claimed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "B2 · Job Claimed?": {
+      "main": [
+        [
+          {
+            "node": "B3 · Final Consent and Send Barrier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "B3 · Final Consent and Send Barrier": {
+      "main": [
+        [
+          {
+            "node": "B4 · Provider Send Authorized?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "B4 · Provider Send Authorized?": {
+      "main": [
+        [
+          {
+            "node": "B5 · Resend / Send Acknowledgment Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "B5 · Resend / Send Acknowledgment Email": {
+      "main": [
+        [
+          {
+            "node": "B6 · Classify Resend Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "B6 · Classify Resend Result": {
+      "main": [
+        [
+          {
+            "node": "B7 · Persist Send Result and Recovery",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "T2 · Every 15 Minutes / Delivery Checks": {
+      "main": [
+        [
+          {
+            "node": "P1 · Claim One Due Delivery Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "P1 · Claim One Due Delivery Check": {
+      "main": [
+        [
+          {
+            "node": "P2 · Delivery Poll Due?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "P2 · Delivery Poll Due?": {
+      "main": [
+        [
+          {
+            "node": "P3 · Resend / Retrieve Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "P3 · Resend / Retrieve Email": {
+      "main": [
+        [
+          {
+            "node": "P4 · Classify Provider Delivery Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "P4 · Classify Provider Delivery Status": {
+      "main": [
+        [
+          {
+            "node": "P5 · Persist Delivery Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "T4oF1iLesIwWu1I7",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "8631c79b-199a-4ef0-b3f9-3f51677683c4",
+  "meta": {
+    "instanceId": "a9ffeeb0672bc04438a2517478a96e439ea10f4d2d22d78a8f5fe1f2de5159ef"
+  },
+  "nodeGroups": [],
+  "id": "FAt4kQTYzXHBLdI0",
+  "tags": []
+}
